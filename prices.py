@@ -82,18 +82,19 @@ def asset_price_history(h, rng="1mo"):
     return out
 
 
-def momentum(sym):
-    """Variazione % del titolo nell'ultimo ~1 mese e ~3 mesi (valuta locale).
+def momentum(sym, rng="5y"):
+    """Variazione % del titolo su piu' orizzonti (visione completa, valuta locale).
 
-    Usata per gli spunti: non serve la conversione in euro perche' e' una
-    variazione percentuale. Ritorna {'m1':..,'m3':..} o None.
+    Ritorna {'m1','m3','m6','m12','all','years'} (percentuali; 'years' = anni di
+    storico disponibile). Non serve la conversione in euro: sono percentuali.
     """
-    _, _, closes = yahoo(sym, "3mo")
+    _, _, closes = yahoo(sym, rng)
     if not closes:
         return None
     days = sorted(closes)
     last = closes[days[-1]]
     ld = datetime.date.fromisoformat(days[-1])
+    first_day = datetime.date.fromisoformat(days[0])
 
     def price_on_or_before(target):
         chosen = None
@@ -104,11 +105,14 @@ def momentum(sym):
                 break
         return chosen
 
-    p30 = price_on_or_before(ld - datetime.timedelta(days=30))
-    p90 = closes[days[0]]
+    def chg(days_back):
+        p = price_on_or_before(ld - datetime.timedelta(days=days_back))
+        return (last / p - 1) * 100 if p else None
+
     return {
-        "m1": (last / p30 - 1) * 100 if p30 else None,
-        "m3": (last / p90 - 1) * 100 if p90 else None,
+        "m1": chg(30), "m3": chg(90), "m6": chg(180), "m12": chg(365),
+        "all": (last / closes[days[0]] - 1) * 100,
+        "years": round((ld - first_day).days / 365.25, 1),
     }
 
 

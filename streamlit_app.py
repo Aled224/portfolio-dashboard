@@ -458,7 +458,8 @@ st.divider()
 
 # ------------------------------------------------------------------ spunti
 st.subheader("💡 Spunti di portafoglio", anchor=False)
-st.caption("Spunti automatici basati sull'andamento reale e sui tuoi target, ispirati a metodi di gestione del "
+st.caption("Spunti automatici basati sui tuoi target e sullo **storico completo dei titoli** (1 mese, 3, 6, 1 anno e "
+           "intero storico disponibile), non solo sul tuo breve periodo di possesso. Ispirati a metodi di gestione del "
            "portafoglio e del rischio. **Non sono consigli finanziari**: sono osservazioni oggettive per ragionare.")
 
 tot = totals["now"] or 1
@@ -495,8 +496,8 @@ advice.append(("📊", "green" if totals["plpct"] >= 0 else "red", "Andamento ge
                 if totals["plpct"] >= 0 else
                 "In rosso nel breve è normale: contano l'orizzonte lungo e la disciplina.")))
 
-# spunti avanzati: momentum 1/3 mesi, ampiezza, divergenze (dalle skill di trading)
-with st.spinner("Analizzo i trend di mercato..."):
+# spunti avanzati: visione completa (1m/3m/6m/1a + intero storico), dalle skill di trading
+with st.spinner("Analizzo lo storico completo dei titoli..."):
     moms = {}
     for h in holdings:
         try:
@@ -504,39 +505,56 @@ with st.spinner("Analizzo i trend di mercato..."):
         except Exception:
             moms[h["id"]] = None
 name_of = {h["id"]: h["nome"] for h in holdings}
-valid = {hid: m for hid, m in moms.items() if m and m.get("m3") is not None}
+valid = {hid: m for hid, m in moms.items() if m and m.get("m12") is not None}
+
+
+def _fmt_h(m):
+    parts = [f"{lab} {pct(m[k])}" for k, lab in
+             [("m1", "1m"), ("m3", "3m"), ("m6", "6m"), ("m12", "1a")] if m.get(k) is not None]
+    return " · ".join(parts)
+
+
 if valid:
-    leader = max(valid, key=lambda k: valid[k]["m3"])
-    lag = min(valid, key=lambda k: valid[k]["m3"])
-    if valid[leader]["m3"] > 0:
-        advice.append(("🚀", "green", f"Momentum forte: {name_of[leader]}",
-                       f"È il titolo con la spinta migliore: {pct(valid[leader]['m3'])} negli ultimi 3 mesi. "
-                       "Le strategie di momentum tendono a restare sui titoli forti, senza però inseguirli."))
-    if valid[lag]["m3"] < 0:
-        advice.append(("📉", "red", f"Trend debole: {name_of[lag]}",
-                       f"{pct(valid[lag]['m3'])} negli ultimi 3 mesi: è in downtrend. "
-                       "Prudenza sui titoli in calo prolungato (evita di aggiungere d'impulso)."))
+    lead = max(valid, key=lambda k: valid[k]["m12"])
+    if valid[lead]["m12"] > 0:
+        advice.append(("📈", "green", f"Forte sull'anno: {name_of[lead]}",
+                       f"{pct(valid[lead]['m12'])} in 12 mesi ({_fmt_h(valid[lead])}). "
+                       "Trend di fondo solido: la forza di lungo periodo conta più del rumore di breve."))
+    weak = min(valid, key=lambda k: valid[k]["m12"])
+    if valid[weak]["m12"] < 0:
+        allp = valid[weak].get("all")
+        extra = (f" Sull'intero storico ({valid[weak]['years']} anni): {pct(allp)}."
+                 if allp is not None else "")
+        advice.append(("📉", "red", f"Debole sul lungo periodo: {name_of[weak]}",
+                       f"{pct(valid[weak]['m12'])} in 12 mesi ({_fmt_h(valid[weak])}).{extra} "
+                       "Su un calo prolungato vale la pena chiedersi se la tesi iniziale regge ancora."))
     m1_vals = {hid: m["m1"] for hid, m in valid.items() if m.get("m1") is not None}
     if m1_vals:
         up = sum(1 for v in m1_vals.values() if v > 0)
         n = len(m1_vals)
         if up / n >= 0.7:
-            advice.append(("🌅", "green", "Ampiezza positiva",
-                           f"{up} titoli su {n} in rialzo nell'ultimo mese: forza diffusa, fase favorevole."))
+            advice.append(("🌅", "green", "Ampiezza positiva (ultimo mese)",
+                           f"{up} titoli su {n} in rialzo: forza diffusa, fase favorevole."))
         elif up / n <= 0.3:
-            advice.append(("🛡️", "gold", "Fase difensiva",
-                           f"Solo {up} su {n} in rialzo nell'ultimo mese: mercato debole. "
-                           "Meglio esposizione prudente e versamenti più cauti."))
+            advice.append(("🛡️", "gold", "Fase difensiva (ultimo mese)",
+                           f"Solo {up} su {n} in rialzo: mercato debole, meglio esposizione prudente."))
         else:
-            advice.append(("🔀", "blue", "Quadro misto",
-                           f"{up} titoli su {n} in rialzo nell'ultimo mese: nessuna direzione netta."))
-    cooling = [hid for hid in valid if valid[hid]["m3"] and valid[hid]["m3"] > 0
+            advice.append(("🔀", "blue", "Quadro misto (ultimo mese)",
+                           f"{up} su {n} in rialzo: nessuna direzione netta nel breve."))
+    cooling = [hid for hid in valid if valid[hid]["m12"] and valid[hid]["m12"] > 0
                and valid[hid].get("m1") is not None and valid[hid]["m1"] < 0]
     if cooling:
         hid = min(cooling, key=lambda k: valid[k]["m1"])
         advice.append(("🌡️", "gold", f"In raffreddamento: {name_of[hid]}",
-                       f"Positivo sui 3 mesi ({pct(valid[hid]['m3'])}) ma in calo nell'ultimo mese "
-                       f"({pct(valid[hid]['m1'])}): lo slancio sta rallentando."))
+                       f"Bene sull'anno ({pct(valid[hid]['m12'])}) ma in calo nell'ultimo mese "
+                       f"({pct(valid[hid]['m1'])}): lo slancio recente sta rallentando."))
+    rec = [hid for hid in valid if valid[hid]["m12"] and valid[hid]["m12"] < 0
+           and valid[hid].get("m1") is not None and valid[hid]["m1"] > 0]
+    if rec:
+        hid = max(rec, key=lambda k: valid[k]["m1"])
+        advice.append(("🌱", "green", f"Possibile ripresa: {name_of[hid]}",
+                       f"Debole sull'anno ({pct(valid[hid]['m12'])}) ma in rialzo nell'ultimo mese "
+                       f"({pct(valid[hid]['m1'])}): primo segnale di inversione, da confermare."))
 
 tone_col = {"green": GREEN, "red": RED, "blue": "#6c8cff", "gold": GOLD}
 cards = ""
