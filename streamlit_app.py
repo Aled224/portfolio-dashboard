@@ -407,10 +407,11 @@ except Exception as e:
     st.warning(f"Storico non disponibile ora: {e}")
 
 cur_price = ahist[-1]["price"] if ahist else baseline_price
+cur_date = itdate(ahist[-1]["date"]) if ahist else itdate(last_update)
 var_price = ((cur_price / baseline_price - 1) * 100) if (baseline_price and cur_price) else 0.0
 m1, m2, m3 = st.columns(3)
-m1.metric("Valore attuale singolo asset", eur2(cur_price))
-m2.metric("Valore iniziale singolo asset", eur2(baseline_price))
+m1.metric(f"Valore attuale singolo asset (al {cur_date})", eur2(cur_price))
+m2.metric(f"Valore iniziale singolo asset ({itdate(base_date)})", eur2(baseline_price))
 m3.metric("Variazione", pct(var_price))
 
 if len(ahist) >= 2:
