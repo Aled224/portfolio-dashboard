@@ -27,6 +27,12 @@ def eur(n):
     return "–" if n is None else "€ " + f"{round(n):,}".replace(",", ".")
 
 
+def eur2(n):
+    if n is None:
+        return "–"
+    return "€ " + f"{n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def pct(n):
     return "–" if n is None else f"{n:+.1f}".replace(".", ",") + "%"
 
@@ -136,8 +142,8 @@ def compute(data):
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def asset_hist_cached(sym, ccy, iniziale, baseline, rng):
-    return prices.asset_value_history({"sym": sym, "ccy": ccy, "iniziale": iniziale}, baseline, rng)
+def asset_hist_cached(sym, ccy, rng):
+    return prices.asset_price_history({"sym": sym, "ccy": ccy}, rng)
 
 
 try:
@@ -322,7 +328,7 @@ for name in order:
             srows += (f"<tr><td>{r['Titolo']}</td><td>{eur(r['valore'])}</td>"
                       f"<td>{num1(wp)}%</td><td>{vspan(r['var'])}</td></tr>")
         st.markdown(
-            "<table class='ptbl'><thead><tr><th>Titolo</th><th>Valore</th><th>Peso</th>"
+            "<table class='ptbl'><thead><tr><th>Titolo</th><th>Valore attuale</th><th>Peso</th>"
             f"<th>Variazione valore</th></tr></thead><tbody>{srows}</tbody></table>",
             unsafe_allow_html=True)
 
@@ -370,39 +376,54 @@ st.subheader("🔍 Andamento di un singolo titolo")
 asset_id = st.selectbox("Scegli un titolo", options=[h["id"] for h in holdings],
                         format_func=lambda i: by_id(holdings, i)["nome"], key="asset_sel")
 ah = by_id(holdings, asset_id)
-arow = next((r for r in rows if r["id"] == asset_id), None)
-m1, m2, m3 = st.columns(3)
-m1.metric(f"Valore iniziale ({itdate(base_date)})", eur(ah["iniziale"]))
-m2.metric(f"Valore attuale (al {itdate(last_update)})", eur(arow["valore"] if arow else ah["iniziale"]))
-m3.metric("Variazione", pct(arow["var"] if arow else 0.0))
+baseline_price = data.get("baseline_prices", {}).get(asset_id)
 
 rng_label = st.radio("Periodo", ["1 mese", "6 mesi", "1 anno", "5 anni", "Max"],
                      horizontal=True, index=2, key="asset_rng")
 rng_map = {"1 mese": "1mo", "6 mesi": "6mo", "1 anno": "1y", "5 anni": "5y", "Max": "max"}
-baseline_price = data.get("baseline_prices", {}).get(asset_id)
+axis_cfg = {
+    "1 mese": {"format": "%d/%m", "tickCount": 7},
+    "6 mesi": {"format": "%b", "tickCount": {"interval": "month", "step": 1}},
+    "1 anno": {"format": "%b %y", "tickCount": {"interval": "month", "step": 2}},
+    "5 anni": {"format": "%Y", "tickCount": {"interval": "year", "step": 1}},
+    "Max":    {"format": "%Y", "tickCount": {"interval": "year", "step": 1}},
+}
+
 try:
     with st.spinner("Carico lo storico di mercato..."):
-        ahist = asset_hist_cached(ah["sym"], ah["ccy"], ah["iniziale"], baseline_price, rng_map[rng_label])
+        ahist = asset_hist_cached(ah["sym"], ah["ccy"], rng_map[rng_label])
 except Exception as e:
     ahist = []
     st.warning(f"Storico non disponibile ora: {e}")
 
+cur_price = ahist[-1]["price"] if ahist else baseline_price
+var_price = ((cur_price / baseline_price - 1) * 100) if (baseline_price and cur_price) else 0.0
+m1, m2, m3 = st.columns(3)
+m1.metric(f"Valore al {itdate(base_date)}", eur2(baseline_price))
+m2.metric("Valore attuale", eur2(cur_price))
+m3.metric("Variazione dall'inizio", pct(var_price))
+
 if len(ahist) >= 2:
-    adf = pd.DataFrame([{"data": pd.to_datetime(p["date"]), "valore": p["value"]} for p in ahist])
+    adf = pd.DataFrame([{"data": pd.to_datetime(p["date"]), "valore": p["price"]} for p in ahist])
     line_color = GREEN if adf["valore"].iloc[-1] >= adf["valore"].iloc[0] else RED
-    achart = (alt.Chart(adf)
-              .mark_line(color=line_color, strokeWidth=2)
-              .encode(
-                  x=alt.X("data:T", sort="ascending", title=None,
-                          axis=alt.Axis(labelColor="#9aa0d0", grid=False)),
-                  y=alt.Y("valore:Q", title="€", scale=alt.Scale(zero=False, nice=True),
-                          axis=alt.Axis(labelColor="#9aa0d0", titleColor="#9aa0d0", gridColor="#2b3168")),
-                  tooltip=[alt.Tooltip("data:T", title="Data", format="%d/%m/%Y"),
-                           alt.Tooltip("valore:Q", title="Valore €", format=",.0f")])
-              .properties(height=300)
-              .configure_view(strokeOpacity=0))
+    cfg = axis_cfg[rng_label]
+    xenc = alt.X("data:T", sort="ascending", title=None,
+                 axis=alt.Axis(format=cfg["format"], tickCount=cfg["tickCount"],
+                               labelColor="#9aa0d0", grid=False))
+    yenc = alt.Y("valore:Q", title="€", scale=alt.Scale(zero=False, nice=True),
+                 axis=alt.Axis(labelColor="#9aa0d0", titleColor="#9aa0d0", gridColor="#2b3168"))
+    base = alt.Chart(adf)
+    line = base.mark_line(color=line_color, strokeWidth=2).encode(x=xenc, y=yenc)
+    nearest = alt.selection_point(nearest=True, on="mouseover", fields=["data"], empty=False)
+    pts = base.mark_point(size=70, color=line_color, filled=True).encode(
+        x=xenc, y=yenc, opacity=alt.condition(nearest, alt.value(1), alt.value(0)),
+        tooltip=[alt.Tooltip("data:T", title="Data", format="%d/%m/%Y"),
+                 alt.Tooltip("valore:Q", title="Valore €", format=",.2f")])
+    rule = base.mark_rule(color="#9aa0d0").encode(
+        x=xenc, opacity=alt.condition(nearest, alt.value(0.3), alt.value(0))).add_params(nearest)
+    achart = (line + pts + rule).properties(height=300).configure_view(strokeOpacity=0)
     st.altair_chart(achart, use_container_width=True)
-    st.caption("Valore della tua posizione nel titolo ricostruito sui prezzi reali di mercato (fonte: Yahoo Finance).")
+    st.caption("Valore (prezzo) del titolo in euro, su prezzi reali di mercato (fonte: Yahoo Finance).")
 else:
     st.caption("Storico non disponibile per questo titolo al momento.")
 

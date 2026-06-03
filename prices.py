@@ -51,13 +51,12 @@ def pac_val(pac, hid, iniziale, current):
     return sum(float(t.get("a", 0)) * (idx_now / (t.get("idx", 1) or 1)) for t in items)
 
 
-def asset_value_history(h, baseline_price, rng="1mo"):
-    """Storico reale (da Yahoo) del VALORE della posizione iniziale nel titolo.
+def asset_price_history(h, rng="1mo"):
+    """Storico reale (da Yahoo) del PREZZO del titolo, convertito in euro.
 
-    valore(t) = iniziale * (prezzo_in_eur(t) / prezzo_in_eur_al_29/05).
-    Ritorna una lista di {date, value} ordinata per data.
+    Ritorna una lista di {date, price} ordinata per data (prezzo per quota in EUR).
     """
-    sym, ccy, iniziale = h["sym"], h["ccy"], h["iniziale"]
+    sym, ccy = h["sym"], h["ccy"]
     _, _, closes = yahoo(sym, rng)
     fx = {}
     if ccy != "EUR":
@@ -78,11 +77,8 @@ def asset_value_history(h, baseline_price, rng="1mo"):
         return last if last is not None else (fx_items[0][1] if fx_items else 1.0)
 
     out = []
-    if not baseline_price:
-        return out
     for day in sorted(closes):
-        p_eur = closes[day] * fx_at(day)
-        out.append({"date": day, "value": round(iniziale * (p_eur / baseline_price), 2)})
+        out.append({"date": day, "price": round(closes[day] * fx_at(day), 4)})
     return out
 
 
