@@ -178,6 +178,11 @@ st.markdown("""
   .catbar>div:first-child{font-size:11px;line-height:1.1}
   .pill{font-size:10px;padding:1px 7px}
 }
+.advgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px;margin-top:6px}
+.advcard{background:#1c2046;border:1px solid #2b3168;border-radius:14px;padding:14px 16px}
+.advt{font-weight:700;margin-bottom:6px;font-size:14px}
+.advx{color:#c7cbe8;font-size:13px;line-height:1.5}
+@media (max-width:640px){.advgrid{grid-template-columns:1fr}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -443,6 +448,56 @@ if len(ahist) >= 2:
     st.caption("Valore (prezzo) del titolo in euro, su prezzi reali di mercato (fonte: Yahoo Finance).")
 else:
     st.caption("Storico non disponibile per questo titolo al momento.")
+
+st.divider()
+
+# ------------------------------------------------------------------ spunti
+st.subheader("💡 Spunti di portafoglio")
+st.caption("Spunti automatici basati sull'andamento reale e sui tuoi target, ispirati a metodi di gestione del "
+           "portafoglio e del rischio. **Non sono consigli finanziari**: sono osservazioni oggettive per ragionare.")
+
+tot = totals["now"] or 1
+advice = []
+devs = sorted(((n, cat_now[n] / tot * 100 - cat_target.get(n, 0)) for n in cat_now), key=lambda x: x[1])
+if devs and devs[0][1] <= -3:
+    n = devs[0][0]
+    advice.append(("🎯", "blue", f"Sotto target: {n}",
+                   f"Pesa il {num1(cat_now[n]/tot*100)}% contro un target del {cat_target.get(n, 0)}%. "
+                   "È la categoria più sotto i tuoi obiettivi: possibile candidata per il prossimo versamento."))
+if devs and devs[-1][1] >= 3:
+    n = devs[-1][0]
+    advice.append(("⚖️", "gold", f"Sopra target: {n}",
+                   f"Pesa il {num1(cat_now[n]/tot*100)}% contro un target del {cat_target.get(n, 0)}%. "
+                   "Aggiungere altro qui ti allontanerebbe dall'equilibrio che ti sei data."))
+if rows:
+    mr = max(rows, key=lambda r: r["valore"])
+    w = mr["valore"] / tot * 100
+    if w >= 30:
+        advice.append(("⚠️", "red", f"Concentrazione: {mr['Titolo']}",
+                       f"Da solo pesa il {num1(w)}% del portafoglio: una posizione così grande "
+                       "amplifica gli effetti (in bene e in male) di un singolo titolo."))
+    ps = sorted(rows, key=lambda r: r["var"])
+    if ps[0]["var"] <= -3:
+        advice.append(("🔻", "red", f"In calo: {ps[0]['Titolo']} ({pct(ps[0]['var'])})",
+                       "È il più in difficoltà dall'inizio. Invece di mediare al ribasso d'impulso, "
+                       "rivedi se la ragione per cui l'hai scelto è ancora valida."))
+    if ps[-1]["var"] >= 3:
+        advice.append(("🚀", "green", f"In crescita: {ps[-1]['Titolo']} ({pct(ps[-1]['var'])})",
+                       "È quello che sta andando meglio: occhio a non lasciarlo diventare una fetta troppo grande."))
+advice.append(("📊", "green" if totals["plpct"] >= 0 else "red", "Andamento generale",
+               f"Portafoglio a {eur(totals['now'])} ({pct(totals['plpct'])} dal {itdate(base_date)}). " +
+               ("In positivo: di solito la cosa più utile è la costanza dei versamenti."
+                if totals["plpct"] >= 0 else
+                "In rosso nel breve è normale: contano l'orizzonte lungo e la disciplina.")))
+
+tone_col = {"green": GREEN, "red": RED, "blue": "#6c8cff", "gold": GOLD}
+cards = ""
+for icon, tone, title, text in advice:
+    c = tone_col.get(tone, "#6c8cff")
+    cards += (f"<div class='advcard' style='border-left:4px solid {c}'>"
+              f"<div class='advt'>{icon} {title}</div><div class='advx'>{text}</div></div>")
+st.markdown(f"<div class='advgrid'>{cards}</div>", unsafe_allow_html=True)
+st.caption("⚠️ Informazioni a scopo educativo, non consulenza finanziaria. Le decisioni restano tue.")
 
 st.divider()
 st.caption("🔒 Accesso privato: solo le persone con la password e invitate via email possono vedere e modificare "
