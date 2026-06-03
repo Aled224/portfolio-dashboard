@@ -8,6 +8,7 @@ In questo file NON c'e' nessun dato personale: solo il programma generico.
 import datetime
 import os
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -322,8 +323,27 @@ st.divider()
 st.subheader("📈 Andamento del valore totale")
 hist = data.get("history", [])
 if len(hist) >= 2:
-    hdf = pd.DataFrame([{"Data": itdate(h["date"]), "Valore (€)": h["total"]} for h in hist]).set_index("Data")
-    st.line_chart(hdf, height=260)
+    hpts = pd.DataFrame([{"data": pd.to_datetime(h["date"]), "valore": h["total"]} for h in hist])
+    vmin, vmax = hpts["valore"].min(), hpts["valore"].max()
+    step = next((s for s in [50, 100, 250, 500, 1000, 2000] if (vmax - vmin) / s <= 6), 2000)
+    lo = (int(vmin) // step) * step
+    hi = -(-int(vmax) // step) * step
+    if hi <= lo:
+        hi = lo + step
+    ticks = list(range(lo, hi + step, step))
+    chart = (alt.Chart(hpts)
+             .mark_line(point=alt.OverlayMarkDef(color="#6c8cff", size=55), color="#6c8cff", strokeWidth=2.5)
+             .encode(
+                 x=alt.X("data:T", sort="ascending", title=None,
+                         axis=alt.Axis(format="%d/%m", labelColor="#9aa0d0", grid=False)),
+                 y=alt.Y("valore:Q", title="€", scale=alt.Scale(domain=[lo, hi]),
+                         axis=alt.Axis(values=ticks, labelColor="#9aa0d0", titleColor="#9aa0d0",
+                                       gridColor="#2b3168")),
+                 tooltip=[alt.Tooltip("data:T", title="Data", format="%d/%m/%Y"),
+                          alt.Tooltip("valore:Q", title="Valore €", format=",.0f")])
+             .properties(height=300)
+             .configure_view(strokeOpacity=0))
+    st.altair_chart(chart, use_container_width=True)
     base_tot = hist[0]["total"]
     trows = ""
     for h in reversed(hist):
