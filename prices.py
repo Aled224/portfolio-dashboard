@@ -82,6 +82,36 @@ def asset_price_history(h, rng="1mo"):
     return out
 
 
+def momentum(sym):
+    """Variazione % del titolo nell'ultimo ~1 mese e ~3 mesi (valuta locale).
+
+    Usata per gli spunti: non serve la conversione in euro perche' e' una
+    variazione percentuale. Ritorna {'m1':..,'m3':..} o None.
+    """
+    _, _, closes = yahoo(sym, "3mo")
+    if not closes:
+        return None
+    days = sorted(closes)
+    last = closes[days[-1]]
+    ld = datetime.date.fromisoformat(days[-1])
+
+    def price_on_or_before(target):
+        chosen = None
+        for d in days:
+            if datetime.date.fromisoformat(d) <= target:
+                chosen = closes[d]
+            else:
+                break
+        return chosen
+
+    p30 = price_on_or_before(ld - datetime.timedelta(days=30))
+    p90 = closes[days[0]]
+    return {
+        "m1": (last / p30 - 1) * 100 if p30 else None,
+        "m3": (last / p90 - 1) * 100 if p90 else None,
+    }
+
+
 def update_prices_in_data(data, log=print):
     """Aggiorna current / baseline_prices / history / last_update dentro `data`.
 

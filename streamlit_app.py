@@ -146,6 +146,11 @@ def asset_hist_cached(sym, ccy, rng):
     return prices.asset_price_history({"sym": sym, "ccy": ccy}, rng)
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def momentum_cached(sym):
+    return prices.momentum(sym)
+
+
 try:
     data = load_data()
 except Exception as e:
@@ -452,7 +457,7 @@ else:
 st.divider()
 
 # ------------------------------------------------------------------ spunti
-st.subheader("💡 Spunti di portafoglio")
+st.subheader("💡 Spunti di portafoglio", anchor=False)
 st.caption("Spunti automatici basati sull'andamento reale e sui tuoi target, ispirati a metodi di gestione del "
            "portafoglio e del rischio. **Non sono consigli finanziari**: sono osservazioni oggettive per ragionare.")
 
@@ -489,6 +494,49 @@ advice.append(("📊", "green" if totals["plpct"] >= 0 else "red", "Andamento ge
                ("In positivo: di solito la cosa più utile è la costanza dei versamenti."
                 if totals["plpct"] >= 0 else
                 "In rosso nel breve è normale: contano l'orizzonte lungo e la disciplina.")))
+
+# spunti avanzati: momentum 1/3 mesi, ampiezza, divergenze (dalle skill di trading)
+with st.spinner("Analizzo i trend di mercato..."):
+    moms = {}
+    for h in holdings:
+        try:
+            moms[h["id"]] = momentum_cached(h["sym"])
+        except Exception:
+            moms[h["id"]] = None
+name_of = {h["id"]: h["nome"] for h in holdings}
+valid = {hid: m for hid, m in moms.items() if m and m.get("m3") is not None}
+if valid:
+    leader = max(valid, key=lambda k: valid[k]["m3"])
+    lag = min(valid, key=lambda k: valid[k]["m3"])
+    if valid[leader]["m3"] > 0:
+        advice.append(("🚀", "green", f"Momentum forte: {name_of[leader]}",
+                       f"È il titolo con la spinta migliore: {pct(valid[leader]['m3'])} negli ultimi 3 mesi. "
+                       "Le strategie di momentum tendono a restare sui titoli forti, senza però inseguirli."))
+    if valid[lag]["m3"] < 0:
+        advice.append(("📉", "red", f"Trend debole: {name_of[lag]}",
+                       f"{pct(valid[lag]['m3'])} negli ultimi 3 mesi: è in downtrend. "
+                       "Prudenza sui titoli in calo prolungato (evita di aggiungere d'impulso)."))
+    m1_vals = {hid: m["m1"] for hid, m in valid.items() if m.get("m1") is not None}
+    if m1_vals:
+        up = sum(1 for v in m1_vals.values() if v > 0)
+        n = len(m1_vals)
+        if up / n >= 0.7:
+            advice.append(("🌅", "green", "Ampiezza positiva",
+                           f"{up} titoli su {n} in rialzo nell'ultimo mese: forza diffusa, fase favorevole."))
+        elif up / n <= 0.3:
+            advice.append(("🛡️", "gold", "Fase difensiva",
+                           f"Solo {up} su {n} in rialzo nell'ultimo mese: mercato debole. "
+                           "Meglio esposizione prudente e versamenti più cauti."))
+        else:
+            advice.append(("🔀", "blue", "Quadro misto",
+                           f"{up} titoli su {n} in rialzo nell'ultimo mese: nessuna direzione netta."))
+    cooling = [hid for hid in valid if valid[hid]["m3"] and valid[hid]["m3"] > 0
+               and valid[hid].get("m1") is not None and valid[hid]["m1"] < 0]
+    if cooling:
+        hid = min(cooling, key=lambda k: valid[k]["m1"])
+        advice.append(("🌡️", "gold", f"In raffreddamento: {name_of[hid]}",
+                       f"Positivo sui 3 mesi ({pct(valid[hid]['m3'])}) ma in calo nell'ultimo mese "
+                       f"({pct(valid[hid]['m1'])}): lo slancio sta rallentando."))
 
 tone_col = {"green": GREEN, "red": RED, "blue": "#6c8cff", "gold": GOLD}
 cards = ""
