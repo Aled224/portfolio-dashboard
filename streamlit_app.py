@@ -18,6 +18,7 @@ st.set_page_config(page_title="Portafoglio", page_icon="📊", layout="wide")
 
 PALETTE = ["#3b82f6", "#a78bfa", "#22d3ee", "#fb923c", "#34d399",
            "#f472b6", "#facc15", "#f87171", "#38bdf8", "#c084fc"]
+GREEN, RED, MUTED, LINE, GOLD = "#2ecc71", "#ff5d6c", "#9aa0d0", "#2b3168", "#ffcf5c"
 
 
 # --------------------------------------------------------------- formattazione
@@ -29,12 +30,31 @@ def pct(n):
     return "–" if n is None else f"{n:+.1f}".replace(".", ",") + "%"
 
 
+def num1(n):
+    return f"{n:.1f}".replace(".", ",")
+
+
 def itdate(iso):
     try:
         y, m, d = str(iso).split("-")
         return f"{d}/{m}/{y}"
     except Exception:
         return str(iso)
+
+
+def vspan(v):
+    c = GREEN if v >= 0 else RED
+    return f"<span style='color:{c};font-weight:600'>{pct(v)}</span>"
+
+
+def next_monday(iso):
+    try:
+        d = datetime.date.fromisoformat(iso)
+        ahead = (0 - d.weekday()) % 7
+        ahead = 7 if ahead == 0 else ahead
+        return (d + datetime.timedelta(days=ahead)).isoformat()
+    except Exception:
+        return ""
 
 
 # ----------------------------------------------------------------------- login
@@ -127,19 +147,30 @@ rows, totals = compute(data)
 last_update = data.get("last_update", "")
 base_date = data.get("base_date", "2026-05-29")
 
+st.markdown("""
+<style>
+.ptbl{width:100%;border-collapse:collapse;font-size:14px;margin-top:4px}
+.ptbl th{color:#9aa0d0;text-align:right;padding:9px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #2b3168}
+.ptbl td{text-align:right;padding:9px 8px;border-bottom:1px solid #2b3168}
+.ptbl th:first-child,.ptbl td:first-child{text-align:left}
+.ptbl tr.tot td{font-weight:700;border-top:2px solid #2b3168;border-bottom:none}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700}
+.autobar{display:inline-block;background:#1c2046;border:1px solid #2b3168;border-radius:999px;padding:6px 14px;font-size:12.5px;color:#9aa0d0;margin:2px 0 6px}
+</style>
+""", unsafe_allow_html=True)
+
 # -------------------------------------------------------------------- intestazione
-top = st.columns([5, 1, 1])
+top = st.columns([5, 1.2])
 with top[0]:
     st.title("📊 Il mio portafoglio")
-    sub = f"Investimento iniziale del **{itdate(base_date)}**"
-    if last_update:
-        sub += f" · prezzi al **{itdate(last_update)}**"
-    st.caption(sub)
+    nm = next_monday(last_update)
+    st.markdown(
+        f"<div class='autobar'>📅 Investimento iniziale del <b>{itdate(base_date)}</b> · "
+        f"prezzi al <b>{itdate(last_update)}</b> · aggiornamento automatico ogni lunedì"
+        + (f" · prossimo <b>{itdate(nm)}</b>" if nm else "") + "</div>",
+        unsafe_allow_html=True)
 with top[1]:
-    if st.button("🔄 Ricarica", use_container_width=True, help="Rilegge gli ultimi dati salvati"):
-        refresh()
-        st.rerun()
-with top[2]:
+    st.write("")
     if st.button("📈 Aggiorna prezzi", use_container_width=True, type="primary",
                  help="Scarica subito i prezzi di mercato aggiornati"):
         with st.spinner("Scarico i prezzi di mercato..."):
@@ -164,16 +195,25 @@ st.divider()
 
 # ------------------------------------------------------------------ tabella titoli
 st.subheader("🧾 I tuoi titoli")
-df = pd.DataFrame([{
-    "Titolo": r["Titolo"], "Categoria": r["Categoria"],
-    "Iniziale": eur(r["iniziale"]),
-    "Aggiunte": eur(r["aggiunte"]) if r["aggiunte"] else "–",
-    "Investito": eur(r["investito"]), "Valore attuale": eur(r["valore"]),
-    "Variazione": pct(r["var"]),
-} for r in rows])
-df.loc[len(df)] = ["TOTALE", "", eur(totals["iniz"]), eur(totals["add"]),
-                   eur(totals["init"]), eur(totals["now"]), pct(totals["plpct"])]
-st.dataframe(df, hide_index=True, use_container_width=True)
+body = ""
+for r in rows:
+    col = colors.get(r["Categoria"], "#888")
+    dot = (f"<span style='display:inline-block;width:10px;height:10px;border-radius:50%;"
+           f"background:{col};margin-right:8px;vertical-align:middle'></span>")
+    pill = f"<span class='pill' style='background:{col}22;color:{col}'>{r['Categoria']}</span>"
+    body += (f"<tr><td>{dot}{r['Titolo']} &nbsp; {pill}</td>"
+             f"<td>{eur(r['iniziale'])}</td>"
+             f"<td>{eur(r['aggiunte']) if r['aggiunte'] else '–'}</td>"
+             f"<td>{eur(r['investito'])}</td>"
+             f"<td><b>{eur(r['valore'])}</b></td>"
+             f"<td>{vspan(r['var'])}</td></tr>")
+body += (f"<tr class='tot'><td>TOTALE</td><td>{eur(totals['iniz'])}</td>"
+         f"<td>{eur(totals['add'])}</td><td>{eur(totals['init'])}</td>"
+         f"<td>{eur(totals['now'])}</td><td>{vspan(totals['plpct'])}</td></tr>")
+st.markdown(
+    "<table class='ptbl'><thead><tr><th>Titolo</th><th>Iniziale</th><th>Aggiunte</th>"
+    "<th>Investito</th><th>Valore attuale</th><th>Variazione</th></tr></thead>"
+    f"<tbody>{body}</tbody></table>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------------ aggiungi PAC
 st.subheader("➕ Registra un versamento (piano d'accumulo)")
@@ -206,12 +246,10 @@ with st.form("add_pac", clear_on_submit=True):
         else:
             st.warning("Inserisci un importo maggiore di zero.")
 
-# ------------------------------------------------------------------ elenco versamenti
 tranches_all = []
 for h in holdings:
     for i, t in enumerate(data.get("pac", {}).get(h["id"], []) or []):
         tranches_all.append((h, i, t))
-
 if tranches_all:
     with st.expander(f"📋 Versamenti registrati ({len(tranches_all)})"):
         for h, i, t in sorted(tranches_all, key=lambda x: x[2].get("ts", 0), reverse=True):
@@ -230,8 +268,6 @@ if tranches_all:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Errore: {e}")
-else:
-    st.caption("Nessun versamento registrato finora.")
 
 st.divider()
 
@@ -241,19 +277,44 @@ cat_now = {}
 for r in rows:
     cat_now[r["Categoria"]] = cat_now.get(r["Categoria"], 0.0) + r["valore"]
 tot_now = totals["now"] or 1
-cat_rows = []
-for name in sorted(cat_now, key=lambda n: -cat_now[n]):
+order = sorted(cat_now, key=lambda n: -cat_now[n])
+scale = max([cat_now[n] / tot_now * 100 for n in order] + [cat_target.get(n, 0) for n in order] + [1])
+
+bars = ""
+for name in order:
     peso = cat_now[name] / tot_now * 100
     tgt = cat_target.get(name, 0)
-    color = colors.get(name, "#888")
-    cc = st.columns([2, 4, 2])
-    cc[0].markdown(f"<span style='color:{color};font-weight:700'>{name}</span>", unsafe_allow_html=True)
-    cc[1].progress(min(peso / 100, 1.0))
-    cc[2].write(f"{peso:.1f}% / target {tgt}%".replace(".", ","))
-    cat_rows.append({"Categoria": name, "Valore": eur(cat_now[name]),
-                     "Peso": pct(peso).replace("+", ""), "Target": f"{tgt}%",
-                     "Scostamento": pct(peso - tgt)})
-st.dataframe(pd.DataFrame(cat_rows), hide_index=True, use_container_width=True)
+    col = colors.get(name, "#888")
+    bars += (
+        "<div style='display:grid;grid-template-columns:150px 1fr 120px;gap:12px;align-items:center;margin:9px 0'>"
+        f"<div style='color:{col};font-weight:700'>{name}</div>"
+        "<div style='background:#171a35;border-radius:999px;height:20px;position:relative;overflow:hidden'>"
+        f"<div style='height:100%;width:{peso/scale*100:.1f}%;background:{col};border-radius:999px'></div>"
+        f"<div style='position:absolute;top:-2px;bottom:-2px;left:{tgt/scale*100:.1f}%;width:2px;background:{GOLD}'></div>"
+        "</div>"
+        f"<div style='color:{MUTED};font-size:13px'>{num1(peso)}% <span style='opacity:.6'>/ {tgt}%</span></div>"
+        "</div>")
+st.markdown(bars + f"<div style='color:{MUTED};font-size:12px;margin-top:6px'>"
+            f"La linea oro indica il target di ogni categoria.</div>", unsafe_allow_html=True)
+
+st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+st.caption("Apri una categoria per vederne la composizione:")
+for name in order:
+    peso = cat_now[name] / tot_now * 100
+    tgt = cat_target.get(name, 0)
+    scost = peso - tgt
+    seg = "🟢" if scost >= 0 else "🔴"
+    with st.expander(f"{name}  ·  {num1(peso)}% / target {tgt}%  ·  scostamento {pct(scost)} {seg}"):
+        sub = [r for r in rows if r["Categoria"] == name]
+        srows = ""
+        for r in sub:
+            wp = r["valore"] / tot_now * 100
+            srows += (f"<tr><td>{r['Titolo']}</td><td>{eur(r['valore'])}</td>"
+                      f"<td>{num1(wp)}%</td><td>{vspan(r['var'])}</td></tr>")
+        st.markdown(
+            "<table class='ptbl'><thead><tr><th>Titolo</th><th>Valore</th><th>Peso</th>"
+            f"<th>Variazione</th></tr></thead><tbody>{srows}</tbody></table>",
+            unsafe_allow_html=True)
 
 st.divider()
 
@@ -264,11 +325,14 @@ if len(hist) >= 2:
     hdf = pd.DataFrame([{"Data": itdate(h["date"]), "Valore (€)": h["total"]} for h in hist]).set_index("Data")
     st.line_chart(hdf, height=260)
     base_tot = hist[0]["total"]
-    tbl = []
+    trows = ""
     for h in reversed(hist):
         d = (h["total"] - base_tot) / base_tot * 100 if base_tot else 0
-        tbl.append({"Data": itdate(h["date"]), "Valore totale": eur(h["total"]), "Var. iniziale": pct(d)})
-    st.dataframe(pd.DataFrame(tbl), hide_index=True, use_container_width=True)
+        trows += f"<tr><td>{itdate(h['date'])}</td><td>{eur(h['total'])}</td><td>{vspan(d)}</td></tr>"
+    st.markdown(
+        "<table class='ptbl'><thead><tr><th>Data</th><th>Valore totale</th>"
+        f"<th>Var. dall'inizio</th></tr></thead><tbody>{trows}</tbody></table>",
+        unsafe_allow_html=True)
 else:
     st.caption("Il grafico crescerà a ogni aggiornamento dei prezzi.")
 
