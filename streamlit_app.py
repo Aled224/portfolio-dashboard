@@ -168,6 +168,16 @@ st.markdown("""
 .ptbl tr.tot td{font-weight:700;border-top:2px solid #2b3168;border-bottom:none}
 .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700}
 .autobar{display:inline-block;background:#1c2046;border:1px solid #2b3168;border-radius:999px;padding:6px 14px;font-size:12.5px;color:#9aa0d0;margin:2px 0 6px}
+.tblwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%}
+.catbar{display:grid;grid-template-columns:150px 1fr 120px;gap:12px;align-items:center;margin:9px 0}
+@media (max-width:640px){
+  .ptbl{font-size:12px}
+  .ptbl th,.ptbl td{padding:6px 5px;white-space:nowrap}
+  .autobar{font-size:11px;padding:5px 10px;white-space:normal}
+  .catbar{grid-template-columns:78px 1fr 58px;gap:6px;font-size:11px}
+  .catbar>div:first-child{font-size:11px;line-height:1.1}
+  .pill{font-size:10px;padding:1px 7px}
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -225,11 +235,11 @@ body += (f"<tr class='tot'><td>TOTALE</td><td></td><td>{eur(totals['iniz'])}</td
          f"<td>{eur(totals['now'])}</td><td>{vspan(totals['plpct'])}</td></tr>")
 sub = "<span style='font-weight:400;text-transform:none;font-size:10px'>"
 st.markdown(
-    "<table class='ptbl'><thead><tr><th>Titolo</th><th>Categoria</th>"
+    "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th><th>Categoria</th>"
     f"<th>Valore iniziale<br>{sub}{itdate(base_date)}</span></th><th>Aggiunte</th>"
     f"<th>Investito</th><th>Valore attuale<br>{sub}al {itdate(last_update)}</span></th>"
     f"<th>Variazione<br>{sub}al {itdate(last_update)}</span></th></tr></thead>"
-    f"<tbody>{body}</tbody></table>", unsafe_allow_html=True)
+    f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------------ aggiungi PAC
 st.subheader("➕ Registra un versamento (piano d'accumulo)")
@@ -302,7 +312,7 @@ for name in order:
     tgt = cat_target.get(name, 0)
     col = colors.get(name, "#888")
     bars += (
-        "<div style='display:grid;grid-template-columns:150px 1fr 120px;gap:12px;align-items:center;margin:9px 0'>"
+        "<div class='catbar'>"
         f"<div style='color:{col};font-weight:700'>{name}</div>"
         "<div style='background:#171a35;border-radius:999px;height:20px;position:relative;overflow:hidden'>"
         f"<div style='height:100%;width:{peso/scale*100:.1f}%;background:{col};border-radius:999px'></div>"
@@ -328,8 +338,8 @@ for name in order:
             srows += (f"<tr><td>{r['Titolo']}</td><td>{eur(r['valore'])}</td>"
                       f"<td>{num1(wp)}%</td><td>{vspan(r['var'])}</td></tr>")
         st.markdown(
-            "<table class='ptbl'><thead><tr><th>Titolo</th><th>Valore attuale</th><th>Peso</th>"
-            f"<th>Variazione valore</th></tr></thead><tbody>{srows}</tbody></table>",
+            "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th><th>Valore attuale</th><th>Peso</th>"
+            f"<th>Variazione valore</th></tr></thead><tbody>{srows}</tbody></table></div>",
             unsafe_allow_html=True)
 
 st.divider()
@@ -363,8 +373,8 @@ if len(hist) >= 2:
         d = (h["total"] - base_tot) / base_tot * 100 if base_tot else 0
         trows += f"<tr><td>{itdate(h['date'])}</td><td>{eur(h['total'])}</td><td>{vspan(d)}</td></tr>"
     st.markdown(
-        "<table class='ptbl'><thead><tr><th>Data</th><th>Valore totale</th>"
-        f"<th>Var. dall'inizio</th></tr></thead><tbody>{trows}</tbody></table>",
+        "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Data</th><th>Valore totale</th>"
+        f"<th>Var. dall'inizio</th></tr></thead><tbody>{trows}</tbody></table></div>",
         unsafe_allow_html=True)
 else:
     st.caption("Il grafico crescerà a ogni aggiornamento dei prezzi.")
