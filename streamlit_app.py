@@ -473,7 +473,7 @@ if devs and devs[-1][1] >= 3:
     n = devs[-1][0]
     advice.append(("⚖️", "gold", f"Sopra target: {n}",
                    f"Pesa il {num1(cat_now[n]/tot*100)}% contro un target del {cat_target.get(n, 0)}%. "
-                   "Aggiungere altro qui ti allontanerebbe dall'equilibrio che ti sei data."))
+                   "Aggiungere altro qui ti allontanerebbe dall'equilibrio che hai scelto per le categorie."))
 if rows:
     mr = max(rows, key=lambda r: r["valore"])
     w = mr["valore"] / tot * 100
