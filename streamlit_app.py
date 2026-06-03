@@ -399,9 +399,9 @@ except Exception as e:
 cur_price = ahist[-1]["price"] if ahist else baseline_price
 var_price = ((cur_price / baseline_price - 1) * 100) if (baseline_price and cur_price) else 0.0
 m1, m2, m3 = st.columns(3)
-m1.metric(f"Valore al {itdate(base_date)}", eur2(baseline_price))
-m2.metric("Valore attuale", eur2(cur_price))
-m3.metric("Variazione dall'inizio", pct(var_price))
+m1.metric("Valore attuale singolo asset", eur2(cur_price))
+m2.metric("Valore iniziale singolo asset", eur2(baseline_price))
+m3.metric("Variazione", pct(var_price))
 
 if len(ahist) >= 2:
     adf = pd.DataFrame([{"data": pd.to_datetime(p["date"]), "valore": p["price"]} for p in ahist])
@@ -414,14 +414,20 @@ if len(ahist) >= 2:
                  axis=alt.Axis(labelColor="#9aa0d0", titleColor="#9aa0d0", gridColor="#2b3168"))
     base = alt.Chart(adf)
     line = base.mark_line(color=line_color, strokeWidth=2).encode(x=xenc, y=yenc)
-    nearest = alt.selection_point(nearest=True, on="mouseover", fields=["data"], empty=False)
-    pts = base.mark_point(size=70, color=line_color, filled=True).encode(
-        x=xenc, y=yenc, opacity=alt.condition(nearest, alt.value(1), alt.value(0)),
+    nearest = alt.selection_point(nearest=True, on="pointerover", fields=["data"],
+                                  empty=False, clear="pointerout")
+    selectors = base.mark_point().encode(
+        x=xenc, opacity=alt.value(0),
         tooltip=[alt.Tooltip("data:T", title="Data", format="%d/%m/%Y"),
-                 alt.Tooltip("valore:Q", title="Valore €", format=",.2f")])
-    rule = base.mark_rule(color="#9aa0d0").encode(
-        x=xenc, opacity=alt.condition(nearest, alt.value(0.3), alt.value(0))).add_params(nearest)
-    achart = (line + pts + rule).properties(height=300).configure_view(strokeOpacity=0)
+                 alt.Tooltip("valore:Q", title="Valore (€)", format=",.2f")]
+    ).add_params(nearest)
+    pts = line.mark_point(size=75, color=line_color, filled=True).encode(
+        opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
+    text = line.mark_text(align="left", dx=7, dy=-10, color="#eef0ff",
+                          fontSize=13, fontWeight="bold").encode(
+        text=alt.condition(nearest, alt.Text("valore:Q", format=",.2f"), alt.value("")))
+    rule = base.mark_rule(color="#9aa0d0").encode(x=xenc).transform_filter(nearest)
+    achart = alt.layer(line, selectors, pts, rule, text).properties(height=300).configure_view(strokeOpacity=0)
     st.altair_chart(achart, use_container_width=True)
     st.caption("Valore (prezzo) del titolo in euro, su prezzi reali di mercato (fonte: Yahoo Finance).")
 else:
