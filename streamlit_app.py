@@ -478,18 +478,20 @@ if devs and devs[-1][1] >= 3:
 if rows:
     mr = max(rows, key=lambda r: r["valore"])
     w = mr["valore"] / tot * 100
-    if w >= 30:
+    mr_tgt = cat_target.get(mr["Categoria"], 0)
+    if w >= 30 and w > mr_tgt:
         advice.append(("⚠️", "red", f"Concentrazione: {mr['Titolo']}",
-                       f"Da solo pesa il {num1(w)}% del portafoglio: una posizione così grande "
-                       "amplifica gli effetti (in bene e in male) di un singolo titolo."))
+                       f"Da solo pesa il {num1(w)}% del portafoglio, più del target della sua categoria ({mr_tgt}%): "
+                       "una posizione così grande amplifica gli effetti, in bene e in male, di un singolo titolo."))
     ps = sorted(rows, key=lambda r: r["var"])
     if ps[0]["var"] <= -3:
-        advice.append(("🔻", "red", f"In calo: {ps[0]['Titolo']} ({pct(ps[0]['var'])})",
-                       "È il più in difficoltà dall'inizio. Invece di mediare al ribasso d'impulso, "
-                       "rivedi se la ragione per cui l'hai scelto è ancora valida."))
+        advice.append(("🔻", "red", f"In calo dal 29/05: {ps[0]['Titolo']} ({pct(ps[0]['var'])})",
+                       "È il titolo più in calo da quando hai investito. Pochi giorni dicono poco: "
+                       "guarda anche l'andamento di lungo periodo qui sopra prima di trarre conclusioni."))
     if ps[-1]["var"] >= 3:
-        advice.append(("🚀", "green", f"In crescita: {ps[-1]['Titolo']} ({pct(ps[-1]['var'])})",
-                       "È quello che sta andando meglio: occhio a non lasciarlo diventare una fetta troppo grande."))
+        advice.append(("🚀", "green", f"In rialzo dal 29/05: {ps[-1]['Titolo']} ({pct(ps[-1]['var'])})",
+                       "È quello salito di più da quando hai investito: occhio a non lasciarlo diventare "
+                       "una fetta troppo grande del portafoglio."))
 advice.append(("📊", "green" if totals["plpct"] >= 0 else "red", "Andamento generale",
                f"Portafoglio a {eur(totals['now'])} ({pct(totals['plpct'])} dal {itdate(base_date)}). " +
                ("In positivo: di solito la cosa più utile è la costanza dei versamenti."
@@ -527,20 +529,31 @@ if valid:
                and valid[hid]["m12"] > 0 and valid[hid]["m6"] < 0]
     if runpull:
         hid = max(runpull, key=lambda k: valid[k]["m12"])
+        allp = valid[hid].get("all")
+        st_txt = (f" Sull'intero storico ({valid[hid]['years']} anni): {pct(allp)}."
+                  if allp is not None else "")
         advice.append(("🎢", "gold", f"Corsa e ritracciamento: {name_of[hid]}",
-                       f"Ha corso molto sull'anno ({pct(valid[hid]['m12'])}) ma sta ritracciando "
-                       f"({pct(valid[hid]['m6'])} a 6 mesi → {_fmt_h(valid[hid])}). "
-                       "Tipico dei titoli volatili/speculativi: occhio agli alti e bassi, non farti guidare solo dal +1 anno."))
-    # 3) Debole sul lungo periodo: giù a 12 mesi
+                       f"Ha corso sull'anno ({pct(valid[hid]['m12'])}) ma sta ritracciando "
+                       f"({pct(valid[hid]['m6'])} a 6 mesi → {_fmt_h(valid[hid])}).{st_txt} "
+                       "Tipico dei titoli volatili/speculativi: occhio agli alti e bassi, non guardare solo il +1 anno."))
+    # 3) Debole nell'ultimo anno: giù a 12 mesi (con contesto sull'intero storico)
     weak = min((hid for hid in valid if valid[hid].get("m12") is not None),
                key=lambda k: valid[k]["m12"], default=None)
     if weak is not None and valid[weak]["m12"] < 0:
         allp = valid[weak].get("all")
-        extra = (f" Sull'intero storico ({valid[weak]['years']} anni): {pct(allp)}."
-                 if allp is not None else "")
-        advice.append(("📉", "red", f"Debole sul lungo periodo: {name_of[weak]}",
-                       f"{pct(valid[weak]['m12'])} in 12 mesi ({_fmt_h(valid[weak])}).{extra} "
-                       "Su un calo prolungato vale la pena chiedersi se la tesi iniziale regge ancora."))
+        if allp is not None and allp >= 0:
+            tone = "gold"
+            ctx = (f" Sull'intero storico ({valid[weak]['years']} anni) resta però positivo ({pct(allp)}): "
+                   "un calo recente dentro una storia più lunga in crescita, da leggere nel contesto.")
+        elif allp is not None:
+            tone = "red"
+            ctx = (f" Anche sull'intero storico ({valid[weak]['years']} anni) è in perdita ({pct(allp)}): "
+                   "debolezza più strutturale, chiediti se la tesi iniziale regge ancora.")
+        else:
+            tone = "red"
+            ctx = " Vale la pena chiedersi se la tesi iniziale regge ancora."
+        advice.append(("📉", tone, f"Debole nell'ultimo anno: {name_of[weak]}",
+                       f"{pct(valid[weak]['m12'])} in 12 mesi ({_fmt_h(valid[weak])}).{ctx}"))
     # 4) Ampiezza dell'ultimo mese
     m1_vals = {hid: m["m1"] for hid, m in valid.items() if m.get("m1") is not None}
     if m1_vals:
