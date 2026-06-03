@@ -1,0 +1,9 @@
+# Segreti: non devono MAI finire qui
+.streamlit/secrets.toml
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
