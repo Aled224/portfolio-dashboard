@@ -202,18 +202,22 @@ for r in rows:
     dot = (f"<span style='display:inline-block;width:10px;height:10px;border-radius:50%;"
            f"background:{col};margin-right:8px;vertical-align:middle'></span>")
     pill = f"<span class='pill' style='background:{col}22;color:{col}'>{r['Categoria']}</span>"
-    body += (f"<tr><td>{dot}{r['Titolo']} &nbsp; {pill}</td>"
+    body += (f"<tr><td>{dot}{r['Titolo']}</td>"
+             f"<td style='text-align:left'>{pill}</td>"
              f"<td>{eur(r['iniziale'])}</td>"
              f"<td>{eur(r['aggiunte']) if r['aggiunte'] else '–'}</td>"
              f"<td>{eur(r['investito'])}</td>"
              f"<td><b>{eur(r['valore'])}</b></td>"
              f"<td>{vspan(r['var'])}</td></tr>")
-body += (f"<tr class='tot'><td>TOTALE</td><td>{eur(totals['iniz'])}</td>"
+body += (f"<tr class='tot'><td>TOTALE</td><td></td><td>{eur(totals['iniz'])}</td>"
          f"<td>{eur(totals['add'])}</td><td>{eur(totals['init'])}</td>"
          f"<td>{eur(totals['now'])}</td><td>{vspan(totals['plpct'])}</td></tr>")
+sub = "<span style='font-weight:400;text-transform:none;font-size:10px'>"
 st.markdown(
-    "<table class='ptbl'><thead><tr><th>Titolo</th><th>Iniziale</th><th>Aggiunte</th>"
-    "<th>Investito</th><th>Valore attuale</th><th>Variazione</th></tr></thead>"
+    "<table class='ptbl'><thead><tr><th>Titolo</th><th>Categoria</th>"
+    f"<th>Valore iniziale<br>{sub}{itdate(base_date)}</span></th><th>Aggiunte</th>"
+    f"<th>Investito</th><th>Valore attuale<br>{sub}al {itdate(last_update)}</span></th>"
+    "<th>Variazione</th></tr></thead>"
     f"<tbody>{body}</tbody></table>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------------ aggiungi PAC
@@ -324,12 +328,10 @@ st.subheader("📈 Andamento del valore totale")
 hist = data.get("history", [])
 if len(hist) >= 2:
     hpts = pd.DataFrame([{"data": pd.to_datetime(h["date"]), "valore": h["total"]} for h in hist])
-    vmin, vmax = hpts["valore"].min(), hpts["valore"].max()
-    step = next((s for s in [50, 100, 250, 500, 1000, 2000] if (vmax - vmin) / s <= 6), 2000)
-    lo = (int(vmin) // step) * step
-    hi = -(-int(vmax) // step) * step
-    if hi <= lo:
-        hi = lo + step
+    vmax = hpts["valore"].max()
+    step = 500
+    lo = 0
+    hi = max(5000, -(-int(vmax) // step) * step)   # almeno 5000, si estende se serve
     ticks = list(range(lo, hi + step, step))
     chart = (alt.Chart(hpts)
              .mark_line(point=alt.OverlayMarkDef(color="#6c8cff", size=55), color="#6c8cff", strokeWidth=2.5)
