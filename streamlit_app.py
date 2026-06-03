@@ -217,7 +217,7 @@ st.markdown(
     "<table class='ptbl'><thead><tr><th>Titolo</th><th>Categoria</th>"
     f"<th>Valore iniziale<br>{sub}{itdate(base_date)}</span></th><th>Aggiunte</th>"
     f"<th>Investito</th><th>Valore attuale<br>{sub}al {itdate(last_update)}</span></th>"
-    "<th>Variazione</th></tr></thead>"
+    f"<th>Variazione<br>{sub}al {itdate(last_update)}</span></th></tr></thead>"
     f"<tbody>{body}</tbody></table>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------------ aggiungi PAC
@@ -318,7 +318,7 @@ for name in order:
                       f"<td>{num1(wp)}%</td><td>{vspan(r['var'])}</td></tr>")
         st.markdown(
             "<table class='ptbl'><thead><tr><th>Titolo</th><th>Valore</th><th>Peso</th>"
-            f"<th>Variazione</th></tr></thead><tbody>{srows}</tbody></table>",
+            f"<th>Variazione valore</th></tr></thead><tbody>{srows}</tbody></table>",
             unsafe_allow_html=True)
 
 st.divider()
@@ -329,7 +329,7 @@ hist = data.get("history", [])
 if len(hist) >= 2:
     hpts = pd.DataFrame([{"data": pd.to_datetime(h["date"]), "valore": h["total"]} for h in hist])
     vmax = hpts["valore"].max()
-    step = 500
+    step = 1000
     lo = 0
     hi = max(5000, -(-int(vmax) // step) * step)   # almeno 5000, si estende se serve
     ticks = list(range(lo, hi + step, step))
