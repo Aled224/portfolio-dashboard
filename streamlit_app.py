@@ -496,14 +496,9 @@ advice.append(("📊", "green" if totals["plpct"] >= 0 else "red", "Andamento ge
                 if totals["plpct"] >= 0 else
                 "In rosso nel breve è normale: contano l'orizzonte lungo e la disciplina.")))
 
-# spunti avanzati: visione completa (1m/3m/6m/1a + intero storico), dalle skill di trading
-with st.spinner("Analizzo lo storico completo dei titoli..."):
-    moms = {}
-    for h in holdings:
-        try:
-            moms[h["id"]] = momentum_cached(h["sym"])
-        except Exception:
-            moms[h["id"]] = None
+# spunti avanzati: visione completa (1m/3m/6m/1a + intero storico),
+# calcolati e salvati a ogni aggiornamento dei dati (niente download in diretta)
+moms = data.get("momentum", {})
 name_of = {h["id"]: h["nome"] for h in holdings}
 valid = {hid: m for hid, m in moms.items() if m and m.get("m12") is not None}
 

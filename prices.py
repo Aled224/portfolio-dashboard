@@ -82,13 +82,8 @@ def asset_price_history(h, rng="1mo"):
     return out
 
 
-def momentum(sym, rng="5y"):
-    """Variazione % del titolo su piu' orizzonti (visione completa, valuta locale).
-
-    Ritorna {'m1','m3','m6','m12','all','years'} (percentuali; 'years' = anni di
-    storico disponibile). Non serve la conversione in euro: sono percentuali.
-    """
-    _, _, closes = yahoo(sym, rng)
+def momentum_from_closes(closes):
+    """Variazione % su piu' orizzonti a partire da una serie di chiusure giornaliere."""
     if not closes:
         return None
     days = sorted(closes)
@@ -116,6 +111,12 @@ def momentum(sym, rng="5y"):
     }
 
 
+def momentum(sym, rng="5y"):
+    """Scarica lo storico del titolo e calcola le variazioni multi-orizzonte."""
+    _, _, closes = yahoo(sym, rng)
+    return momentum_from_closes(closes)
+
+
 def update_prices_in_data(data, log=print):
     """Aggiorna current / baseline_prices / history / last_update dentro `data`.
 
@@ -139,16 +140,20 @@ def update_prices_in_data(data, log=print):
         fx_base[ccy] = closes.get(base_date) or n
 
     current = {}
+    mom = dict(data.get("momentum", {}))
     for h in holdings:
         hid, sym, ccy, iniziale = h["id"], h["sym"], h["ccy"], h["iniziale"]
         try:
-            cur, now, closes = yahoo(sym, rng="3mo")
+            cur, now, closes = yahoo(sym, rng="5y")
             now_eur = now * fx_now[ccy]
             if hid not in baseline or not baseline[hid]:
                 c29 = closes.get(base_date)
                 baseline[hid] = (c29 * fx_base[ccy]) if c29 else now_eur
             value = iniziale * (now_eur / baseline[hid])
             current[hid] = round(value, 2)
+            m = momentum_from_closes(closes)
+            if m:
+                mom[hid] = m
             log(f"OK  {h['nome']:20s} {sym:9s} -> EUR {current[hid]}  ({(value/iniziale-1)*100:+.1f}%)")
         except Exception as e:
             current[hid] = current_saved.get(hid, iniziale)
@@ -172,4 +177,5 @@ def update_prices_in_data(data, log=print):
     data["current"] = current
     data["history"] = hist
     data["last_update"] = today
+    data["momentum"] = mom
     return data, {"total": total, "add_tot": add_tot, "today": today}
