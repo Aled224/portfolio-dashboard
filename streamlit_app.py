@@ -509,20 +509,39 @@ def _fmt_h(m):
     return " · ".join(parts)
 
 
+def _hz(m, *keys):
+    return all(m.get(k) is not None for k in keys)
+
+
 if valid:
-    lead = max(valid, key=lambda k: valid[k]["m12"])
-    if valid[lead]["m12"] > 0:
-        advice.append(("📈", "green", f"Forte sull'anno: {name_of[lead]}",
-                       f"{pct(valid[lead]['m12'])} in 12 mesi ({_fmt_h(valid[lead])}). "
-                       "Trend di fondo solido: la forza di lungo periodo conta più del rumore di breve."))
-    weak = min(valid, key=lambda k: valid[k]["m12"])
-    if valid[weak]["m12"] < 0:
+    # 1) Forte e COSTANTE: su a 3, 6 e 12 mesi (non un singolo colpo)
+    solid = [hid for hid in valid if _hz(valid[hid], "m3", "m6", "m12")
+             and valid[hid]["m12"] > 0 and valid[hid]["m6"] > 0 and valid[hid]["m3"] > 0]
+    if solid:
+        hid = max(solid, key=lambda k: valid[k]["m6"])
+        advice.append(("📈", "green", f"Forte e costante: {name_of[hid]}",
+                       f"In rialzo su tutti gli orizzonti ({_fmt_h(valid[hid])}): trend coerente, "
+                       "non un rimbalzo isolato."))
+    # 2) Corsa poi RITRACCIAMENTO: su sull'anno ma giù a 6 mesi (es. titoli volatili)
+    runpull = [hid for hid in valid if _hz(valid[hid], "m6", "m12")
+               and valid[hid]["m12"] > 0 and valid[hid]["m6"] < 0]
+    if runpull:
+        hid = max(runpull, key=lambda k: valid[k]["m12"])
+        advice.append(("🎢", "gold", f"Corsa e ritracciamento: {name_of[hid]}",
+                       f"Ha corso molto sull'anno ({pct(valid[hid]['m12'])}) ma sta ritracciando "
+                       f"({pct(valid[hid]['m6'])} a 6 mesi → {_fmt_h(valid[hid])}). "
+                       "Tipico dei titoli volatili/speculativi: occhio agli alti e bassi, non farti guidare solo dal +1 anno."))
+    # 3) Debole sul lungo periodo: giù a 12 mesi
+    weak = min((hid for hid in valid if valid[hid].get("m12") is not None),
+               key=lambda k: valid[k]["m12"], default=None)
+    if weak is not None and valid[weak]["m12"] < 0:
         allp = valid[weak].get("all")
         extra = (f" Sull'intero storico ({valid[weak]['years']} anni): {pct(allp)}."
                  if allp is not None else "")
         advice.append(("📉", "red", f"Debole sul lungo periodo: {name_of[weak]}",
                        f"{pct(valid[weak]['m12'])} in 12 mesi ({_fmt_h(valid[weak])}).{extra} "
                        "Su un calo prolungato vale la pena chiedersi se la tesi iniziale regge ancora."))
+    # 4) Ampiezza dell'ultimo mese
     m1_vals = {hid: m["m1"] for hid, m in valid.items() if m.get("m1") is not None}
     if m1_vals:
         up = sum(1 for v in m1_vals.values() if v > 0)
@@ -536,15 +555,17 @@ if valid:
         else:
             advice.append(("🔀", "blue", "Quadro misto (ultimo mese)",
                            f"{up} su {n} in rialzo: nessuna direzione netta nel breve."))
-    cooling = [hid for hid in valid if valid[hid]["m12"] and valid[hid]["m12"] > 0
-               and valid[hid].get("m1") is not None and valid[hid]["m1"] < 0]
+    # 5) In raffreddamento: solido (anno e 6 mesi su) ma giù nell'ultimo mese
+    cooling = [hid for hid in valid if _hz(valid[hid], "m1", "m6", "m12")
+               and valid[hid]["m12"] > 0 and valid[hid]["m6"] > 0 and valid[hid]["m1"] < 0]
     if cooling:
         hid = min(cooling, key=lambda k: valid[k]["m1"])
         advice.append(("🌡️", "gold", f"In raffreddamento: {name_of[hid]}",
-                       f"Bene sull'anno ({pct(valid[hid]['m12'])}) ma in calo nell'ultimo mese "
-                       f"({pct(valid[hid]['m1'])}): lo slancio recente sta rallentando."))
-    rec = [hid for hid in valid if valid[hid]["m12"] and valid[hid]["m12"] < 0
-           and valid[hid].get("m1") is not None and valid[hid]["m1"] > 0]
+                       f"Solido sull'anno e a 6 mesi ma in calo nell'ultimo mese "
+                       f"({pct(valid[hid]['m1'])}): rallentamento recente da tenere d'occhio."))
+    # 6) Possibile ripresa: debole sull'anno ma su nell'ultimo mese
+    rec = [hid for hid in valid if _hz(valid[hid], "m1", "m12")
+           and valid[hid]["m12"] < 0 and valid[hid]["m1"] > 0]
     if rec:
         hid = max(rec, key=lambda k: valid[k]["m1"])
         advice.append(("🌱", "green", f"Possibile ripresa: {name_of[hid]}",
