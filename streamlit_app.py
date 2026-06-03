@@ -359,5 +359,46 @@ else:
     st.caption("Il grafico crescerà a ogni aggiornamento dei prezzi.")
 
 st.divider()
+
+# ------------------------------------------------------------------ singolo titolo
+st.subheader("🔍 Andamento di un singolo titolo")
+asset_id = st.selectbox("Scegli un titolo", options=[h["id"] for h in holdings],
+                        format_func=lambda i: by_id(holdings, i)["nome"], key="asset_sel")
+ah = by_id(holdings, asset_id)
+arow = next((r for r in rows if r["id"] == asset_id), None)
+m1, m2, m3 = st.columns(3)
+m1.metric(f"Valore iniziale ({itdate(base_date)})", eur(ah["iniziale"]))
+m2.metric(f"Valore attuale (al {itdate(last_update)})", eur(arow["valore"] if arow else ah["iniziale"]))
+m3.metric("Variazione", pct(arow["var"] if arow else 0.0))
+
+aseries = []
+for e in hist:
+    v = None
+    if isinstance(e.get("vals"), dict) and asset_id in e["vals"]:
+        v = e["vals"][asset_id]
+    elif e["date"] == base_date:
+        v = ah["iniziale"]
+    if v is not None:
+        aseries.append({"data": pd.to_datetime(e["date"]), "valore": v})
+
+if len(aseries) >= 2:
+    adf = pd.DataFrame(aseries)
+    acol = colors.get(ah["cat"], "#6c8cff")
+    achart = (alt.Chart(adf)
+              .mark_line(point=alt.OverlayMarkDef(color=acol, size=55), color=acol, strokeWidth=2.5)
+              .encode(
+                  x=alt.X("data:T", sort="ascending", title=None,
+                          axis=alt.Axis(format="%d/%m", labelColor="#9aa0d0", grid=False)),
+                  y=alt.Y("valore:Q", title="€", scale=alt.Scale(zero=False, nice=True),
+                          axis=alt.Axis(labelColor="#9aa0d0", titleColor="#9aa0d0", gridColor="#2b3168")),
+                  tooltip=[alt.Tooltip("data:T", title="Data", format="%d/%m/%Y"),
+                           alt.Tooltip("valore:Q", title="Valore €", format=",.0f")])
+              .properties(height=280)
+              .configure_view(strokeOpacity=0))
+    st.altair_chart(achart, use_container_width=True)
+else:
+    st.caption("L'andamento del singolo titolo si popolerà con i prossimi aggiornamenti settimanali.")
+
+st.divider()
 st.caption("🔒 Accesso privato: solo le persone con la password e invitate via email possono vedere e modificare "
            "questa dashboard. I tuoi dati sono conservati in un archivio privato.")
