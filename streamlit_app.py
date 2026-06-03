@@ -135,6 +135,11 @@ def compute(data):
                   "now": tot_now, "pl": pl, "plpct": plpct}
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def asset_hist_cached(sym, ccy, iniziale, baseline, rng):
+    return prices.asset_value_history({"sym": sym, "ccy": ccy, "iniziale": iniziale}, baseline, rng)
+
+
 try:
     data = load_data()
 except Exception as e:
@@ -371,33 +376,35 @@ m1.metric(f"Valore iniziale ({itdate(base_date)})", eur(ah["iniziale"]))
 m2.metric(f"Valore attuale (al {itdate(last_update)})", eur(arow["valore"] if arow else ah["iniziale"]))
 m3.metric("Variazione", pct(arow["var"] if arow else 0.0))
 
-aseries = []
-for e in hist:
-    v = None
-    if isinstance(e.get("vals"), dict) and asset_id in e["vals"]:
-        v = e["vals"][asset_id]
-    elif e["date"] == base_date:
-        v = ah["iniziale"]
-    if v is not None:
-        aseries.append({"data": pd.to_datetime(e["date"]), "valore": v})
+rng_label = st.radio("Periodo", ["1 mese", "6 mesi", "1 anno", "5 anni", "Max"],
+                     horizontal=True, index=2, key="asset_rng")
+rng_map = {"1 mese": "1mo", "6 mesi": "6mo", "1 anno": "1y", "5 anni": "5y", "Max": "max"}
+baseline_price = data.get("baseline_prices", {}).get(asset_id)
+try:
+    with st.spinner("Carico lo storico di mercato..."):
+        ahist = asset_hist_cached(ah["sym"], ah["ccy"], ah["iniziale"], baseline_price, rng_map[rng_label])
+except Exception as e:
+    ahist = []
+    st.warning(f"Storico non disponibile ora: {e}")
 
-if len(aseries) >= 2:
-    adf = pd.DataFrame(aseries)
-    acol = colors.get(ah["cat"], "#6c8cff")
+if len(ahist) >= 2:
+    adf = pd.DataFrame([{"data": pd.to_datetime(p["date"]), "valore": p["value"]} for p in ahist])
+    line_color = GREEN if adf["valore"].iloc[-1] >= adf["valore"].iloc[0] else RED
     achart = (alt.Chart(adf)
-              .mark_line(point=alt.OverlayMarkDef(color=acol, size=55), color=acol, strokeWidth=2.5)
+              .mark_line(color=line_color, strokeWidth=2)
               .encode(
                   x=alt.X("data:T", sort="ascending", title=None,
-                          axis=alt.Axis(format="%d/%m", labelColor="#9aa0d0", grid=False)),
+                          axis=alt.Axis(labelColor="#9aa0d0", grid=False)),
                   y=alt.Y("valore:Q", title="€", scale=alt.Scale(zero=False, nice=True),
                           axis=alt.Axis(labelColor="#9aa0d0", titleColor="#9aa0d0", gridColor="#2b3168")),
                   tooltip=[alt.Tooltip("data:T", title="Data", format="%d/%m/%Y"),
                            alt.Tooltip("valore:Q", title="Valore €", format=",.0f")])
-              .properties(height=280)
+              .properties(height=300)
               .configure_view(strokeOpacity=0))
     st.altair_chart(achart, use_container_width=True)
+    st.caption("Valore della tua posizione nel titolo ricostruito sui prezzi reali di mercato (fonte: Yahoo Finance).")
 else:
-    st.caption("L'andamento del singolo titolo si popolerà con i prossimi aggiornamenti settimanali.")
+    st.caption("Storico non disponibile per questo titolo al momento.")
 
 st.divider()
 st.caption("🔒 Accesso privato: solo le persone con la password e invitate via email possono vedere e modificare "

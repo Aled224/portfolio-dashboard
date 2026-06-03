@@ -51,6 +51,41 @@ def pac_val(pac, hid, iniziale, current):
     return sum(float(t.get("a", 0)) * (idx_now / (t.get("idx", 1) or 1)) for t in items)
 
 
+def asset_value_history(h, baseline_price, rng="1mo"):
+    """Storico reale (da Yahoo) del VALORE della posizione iniziale nel titolo.
+
+    valore(t) = iniziale * (prezzo_in_eur(t) / prezzo_in_eur_al_29/05).
+    Ritorna una lista di {date, value} ordinata per data.
+    """
+    sym, ccy, iniziale = h["sym"], h["ccy"], h["iniziale"]
+    _, _, closes = yahoo(sym, rng)
+    fx = {}
+    if ccy != "EUR":
+        _, fx = fx_to_eur(ccy, rng)
+    fx_items = sorted(fx.items())
+
+    def fx_at(day):
+        if ccy == "EUR":
+            return 1.0
+        if day in fx:
+            return fx[day]
+        last = None
+        for d, r in fx_items:
+            if d <= day:
+                last = r
+            else:
+                break
+        return last if last is not None else (fx_items[0][1] if fx_items else 1.0)
+
+    out = []
+    if not baseline_price:
+        return out
+    for day in sorted(closes):
+        p_eur = closes[day] * fx_at(day)
+        out.append({"date": day, "value": round(iniziale * (p_eur / baseline_price), 2)})
+    return out
+
+
 def update_prices_in_data(data, log=print):
     """Aggiorna current / baseline_prices / history / last_update dentro `data`.
 
