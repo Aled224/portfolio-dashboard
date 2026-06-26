@@ -1,0 +1,27 @@
+name: Tieni sveglia l'app
+
+# Visita l'app a intervalli regolari cosi' Streamlit Cloud non la mette
+# "in pausa" (la schermata "your app is in the oven"). Nessun dato sensibile:
+# fa solo una visita all'indirizzo pubblico dell'app.
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'   # ogni 4 ore
+  workflow_dispatch:          # avvio manuale dal sito di GitHub
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Visita l'app per tenerla sveglia
+        run: |
+          URL="${{ secrets.APP_URL }}"
+          if [ -z "$URL" ]; then URL="https://portfolio-dashboard-ciao.streamlit.app/"; fi
+          echo "Ping a: $URL"
+          for path in "" "_stcore/health"; do
+            full="${URL%/}/$path"
+            code=$(curl -s -L -o /dev/null -w "%{http_code}" \
+                   -A "Mozilla/5.0 KeepAlive" --max-time 60 "$full" || echo "000")
+            echo "  $full -> $code"
+          done
+          echo "Fatto."
