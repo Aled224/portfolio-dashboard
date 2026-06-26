@@ -22,11 +22,16 @@ import requests
 
 _UA = {"User-Agent": "Mozilla/5.0 (compatible; PortfolioRadar/1.0)"}
 
-# Filtro "evento da investimento": una notizia entra solo se parla anche di questo.
+# Filtro "catalizzatore": una notizia entra se contiene almeno uno di questi.
+# Non solo M&A: tutto cio' che puo' muovere (in bene o male) il valore di un titolo.
 EVENTI = ('IPO OR quotazione OR acquisizione OR fusione OR merger OR acquisition OR '
           'partnership OR "joint venture" OR "aumento di capitale" OR '
           '"round di finanziamento" OR investimento OR "nuovo stabilimento" OR '
-          'buyback OR "profit warning"')
+          'buyback OR dividendo OR trimestrale OR utili OR earnings OR "profit warning" OR '
+          'guidance OR "nuovo prodotto" OR lancio OR brevetto OR "via libera" OR FDA OR '
+          'approvazione OR commessa OR contratto OR "maxi ordine" OR "target price" OR '
+          'rating OR upgrade OR downgrade OR causa OR multa OR antitrust OR sanzioni OR '
+          'licenziamenti OR "nuovo ceo" OR dimissioni')
 
 # Aree del portafoglio: (etichetta, emoji, parole-chiave del settore).
 # La query finale e' (EVENTI) AND (settore): evento d'investimento DENTRO il settore.
@@ -53,6 +58,10 @@ AREE_SPECIALI = [
     ("Grandi operazioni globali", "🌟",
      '"maxi acquisizione" OR "mega merger" OR "blockbuster deal" OR '
      '"biggest IPO" OR "record IPO" OR ("miliardi" (acquisizione OR fusione OR IPO))'),
+    ("Altro: macro & mercati", "📌",
+     '"banca centrale" OR Fed OR "Federal Reserve" OR BCE OR "tassi di interesse" OR '
+     '"taglio dei tassi" OR "Wall Street" OR "borse europee" OR "mercati azionari" OR '
+     '"prezzo del petrolio" OR "materie prime critiche" OR recessione'),
 ]
 
 

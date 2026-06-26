@@ -600,10 +600,10 @@ st.divider()
 # ------------------------------------------------------------------ radar news
 st.subheader("🔭 Nuovi spunti dal mercato", anchor=False)
 st.caption("Notizie pubbliche in tempo reale (Google News, centinaia di testate) **agganciate ai tuoi ambiti**: "
-           "ogni blocco mostra solo **eventi rilevanti per un investimento** (IPO, acquisizioni, fusioni, "
-           "partnership, round, aperture…) **dentro i settori in cui hai investito** — AI/Cloud, Auto "
-           "elettriche/Batterie, Mercati emergenti, Sanità, Azionario globale — più le **grandi operazioni "
-           "globali** lontane ma significative. Sono **spunti da approfondire, non consigli finanziari**.")
+           "ogni blocco mostra **tutto ciò che può muovere il valore** (IPO, acquisizioni, fusioni, partnership, "
+           "trimestrali, lanci, approvazioni, commesse, rating, cause…) **dentro i settori in cui hai investito** "
+           "— AI/Cloud, Auto elettriche/Batterie, Mercati emergenti, Sanità, Azionario globale — più le **grandi "
+           "operazioni globali** e una sezione **📌 Altro** con macro e mercati. **Spunti, non consigli finanziari**.")
 
 
 @st.cache_data(ttl=10800, show_spinner=False)  # aggiorna ogni 3 ore
