@@ -143,8 +143,8 @@ def compute(data):
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def asset_hist_cached(sym, ccy, rng):
-    return prices.asset_price_history({"sym": sym, "ccy": ccy}, rng)
+def asset_hist_cached(sym, ccy, cg_id, source, rng):
+    return prices.asset_price_history({"sym": sym, "ccy": ccy, "cg_id": cg_id, "source": source}, rng)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -156,8 +156,8 @@ CRYPTO_DEFAULT = {
     "base_date": "2026-06-26",
     "last_update": "2026-06-26",
     "holdings": [
-        {"id": "sol", "nome": "Solana (SOL)", "sym": "SOL-EUR", "ccy": "EUR", "iniziale": 2856.22, "cat": "Layer 1"},
-        {"id": "wld", "nome": "Worldcoin (WLD)", "sym": "WLD-USD", "ccy": "USD", "iniziale": 167.14, "cat": "AI / Identity"},
+        {"id": "sol", "nome": "Solana (SOL)", "sym": "SOL-EUR", "ccy": "EUR", "cg_id": "solana", "source": "coingecko", "iniziale": 2856.22, "cat": "Layer 1"},
+        {"id": "wld", "nome": "Worldcoin (WLD)", "sym": "WLD-USD", "ccy": "USD", "cg_id": "worldcoin-wld", "source": "coingecko", "iniziale": 167.14, "cat": "AI / Identity"},
     ],
     "baseline_prices": {"sol": 62.40, "wld": 0.405853},
     "current": {"sol": 2856.22, "wld": 167.14},
@@ -225,6 +225,20 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📊 Il mio portafoglio")
+
+_CG_IDS = {"sol": "solana", "wld": "worldcoin-wld"}
+_cg_chg = False
+for _h in doc.get("crypto", {}).get("holdings", []):
+    if _h.get("id") in _CG_IDS and _h.get("source") != "coingecko":
+        _h["cg_id"] = _CG_IDS[_h["id"]]
+        _h["source"] = "coingecko"
+        _cg_chg = True
+if _cg_chg:
+    try:
+        save_data(doc); refresh()
+    except Exception:
+        pass
+
 
 def render_dashboard(ds, doc, ns):
     data = ds
@@ -455,7 +469,7 @@ def render_dashboard(ds, doc, ns):
 
     try:
         with st.spinner("Carico lo storico di mercato..."):
-            ahist = asset_hist_cached(ah["sym"], ah["ccy"], rng_map[rng_label])
+            ahist = asset_hist_cached(ah["sym"], ah["ccy"], ah.get("cg_id"), ah.get("source"), rng_map[rng_label])
     except Exception as e:
         ahist = []
         st.warning(f"Storico non disponibile ora: {e}")

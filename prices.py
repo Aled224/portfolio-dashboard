@@ -41,6 +41,22 @@ def fx_to_eur(ccy, rng="3mo"):
     return (1.0 / now2 if now2 else None), inv
 
 
+def coingecko_chart(cg_id, days="max"):
+    """Prezzo crypto da CoinGecko, NATIVO in EUR. Ritorna (now_eur, closes {giorno: prezzo})."""
+    url = (f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart"
+           f"?vs_currency=eur&days={days}")
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    d = json.loads(urllib.request.urlopen(req, timeout=25).read())
+    arr = d.get("prices", []) or []
+    closes = {}
+    for ms, p in arr:
+        if p is not None:
+            day = datetime.datetime.utcfromtimestamp(ms / 1000).strftime("%Y-%m-%d")
+            closes[day] = p  # ultimo prezzo del giorno
+    now = arr[-1][1] if arr else None
+    return now, closes
+
+
 def pac_val(pac, hid, iniziale, current):
     items = pac.get(hid)
     if not items:
@@ -56,6 +72,13 @@ def asset_price_history(h, rng="1mo"):
 
     Ritorna una lista di {date, price} ordinata per data (prezzo per quota in EUR).
     """
+    if h.get("source") == "coingecko" and h.get("cg_id"):
+        days = {"1mo": "30", "6mo": "180", "1y": "365", "5y": "1825", "max": "max"}.get(rng, "365")
+        try:
+            _, closes = coingecko_chart(h["cg_id"], days=days)
+            return [{"date": d, "price": round(closes[d], 4)} for d in sorted(closes)]
+        except Exception:
+            pass  # fallback a Yahoo sotto
     sym, ccy = h["sym"], h["ccy"]
     _, _, closes = yahoo(sym, rng)
     fx = {}
@@ -144,11 +167,19 @@ def update_prices_in_data(data, log=print):
     for h in holdings:
         hid, sym, ccy, iniziale = h["id"], h["sym"], h["ccy"], h["iniziale"]
         try:
-            cur, now, closes = yahoo(sym, rng="5y")
-            now_eur = now * fx_now[ccy]
+            if h.get("source") == "coingecko" and h.get("cg_id"):
+                try:
+                    now_eur, closes = coingecko_chart(h["cg_id"], days="max")
+                    base_fx = 1.0  # CoinGecko gia' in EUR
+                except Exception:
+                    cur, now, closes = yahoo(sym, rng="5y")
+                    now_eur, base_fx = now * fx_now[ccy], fx_base[ccy]
+            else:
+                cur, now, closes = yahoo(sym, rng="5y")
+                now_eur, base_fx = now * fx_now[ccy], fx_base[ccy]
             if hid not in baseline or not baseline[hid]:
                 c29 = closes.get(base_date)
-                baseline[hid] = (c29 * fx_base[ccy]) if c29 else now_eur
+                baseline[hid] = (c29 * base_fx) if c29 else now_eur
             value = iniziale * (now_eur / baseline[hid])
             current[hid] = round(value, 2)
             m = momentum_from_closes(closes)
