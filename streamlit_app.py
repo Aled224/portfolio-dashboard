@@ -675,29 +675,31 @@ def _render_temi(temi):
                "Non è consulenza finanziaria: fai sempre le tue verifiche.")
 
 
-STAKING_RATE = 0.0572
+STAKING_RATES = {"sol": 0.0572, "wld": 0.1368}
+STAKING_HORIZONS = {"6 mesi": 0.5, "1 anno": 1, "2 anni": 2, "5 anni": 5, "10 anni": 10}
 
 
 def render_staking_projection(ds):
     st.divider()
     st.subheader("🌱 Proiezione staking", anchor=False)
-    _, tot = compute(ds)
-    now = tot["now"]
-    st.caption(f"Le tue crypto sono in **staking** al **{STAKING_RATE*100:.2f}% annuo**. Proiezione del valore a "
-               f"interesse composto partendo da {eur(now)} (solo rendimento staking, prezzi fermi). "
-               "Stima indicativa, non garanzia: il valore di mercato delle crypto può variare molto.")
-    trows = ""
-    for y in [1, 2, 3, 5]:
-        val = now * ((1 + STAKING_RATE) ** y)
-        gain = val - now
-        lbl = f"{y} anno" if y == 1 else f"{y} anni"
-        trows += (f"<tr><td>{lbl}</td><td>{eur(val)}</td>"
-                  f"<td>{vspan((val/now-1)*100)}</td>"
-                  f"<td style='color:#2ecc71;font-weight:600'>+ {eur(gain)}</td></tr>")
-    st.markdown(
-        "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Orizzonte</th>"
-        "<th>Valore proiettato</th><th>Crescita</th><th>Guadagno staking</th></tr></thead>"
-        f"<tbody>{trows}</tbody></table></div>", unsafe_allow_html=True)
+    st.caption("Le tue crypto sono in **staking**: Solana **5,72%/anno**, Worldcoin **13,68%/anno**. "
+               "Scegli l'orizzonte: proiezione a interesse composto, solo rendimento staking (prezzi fermi). "
+               "Stima indicativa, non garanzia: il valore di mercato può variare molto.")
+    sel = st.selectbox("Orizzonte", list(STAKING_HORIZONS.keys()), index=1, key="cry_stake_horizon")
+    yrs = STAKING_HORIZONS[sel]
+    rws, _ = compute(ds)
+    valmap = {r["id"]: r["valore"] for r in rws}
+    holds = [h for h in ds.get("holdings", []) if h["id"] in STAKING_RATES]
+    cols = st.columns(len(holds) or 1)
+    for col, h in zip(cols, holds):
+        now = valmap.get(h["id"], float(h.get("iniziale", 0)))
+        rate = STAKING_RATES[h["id"]]
+        val = now * ((1 + rate) ** yrs)
+        rate_str = f"{rate*100:.2f}".replace(".", ",")
+        with col:
+            st.markdown(f"**{h['nome']}** · staking {rate_str}%/anno")
+            st.metric(f"Proiezione a {sel}", eur(val), f"+ {eur(val - now)}")
+            st.caption(f"Valore attuale: {eur(now)}")
 
 
 def render_stock_news():
