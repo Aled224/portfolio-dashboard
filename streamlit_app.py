@@ -508,7 +508,8 @@ def render_dashboard(ds, doc, ns):
         rule = base.mark_rule(color="#9aa0d0").encode(x=xenc).transform_filter(nearest)
         achart = alt.layer(line, selectors, pts, rule, text).properties(height=300).configure_view(strokeOpacity=0)
         st.altair_chart(achart, use_container_width=True)
-        st.caption("Valore (prezzo) del titolo in euro, su prezzi reali di mercato (fonte: Yahoo Finance).")
+        _fonte = "CoinGecko (fallback Yahoo Finance)" if ns == "cry" else "Yahoo Finance"
+        st.caption(f"Valore (prezzo) in euro, su prezzi reali di mercato (fonte: {_fonte}).")
     else:
         st.caption("Storico non disponibile per questo titolo al momento.")
 
