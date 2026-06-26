@@ -775,6 +775,7 @@ def render_overview(doc):
     c2.metric("Valore attuale", eur(now))
     c3.metric("Guadagno / Perdita", eur(pl), pct(plpct))
     c4.metric("Posizioni totali", len(rows_s) + len(rows_c))
+    st.caption("📌 La «Variazione» è sempre calcolata rispetto al **valore iniziale investito**.")
     st.divider()
 
     # --- split Azioni vs Crypto ---
@@ -822,8 +823,21 @@ def render_overview(doc):
     st.subheader("📈 Andamento totale (azioni + crypto)")
     h_s = stk.get("history", []) or []
     h_c = cry.get("history", []) or []
+    # le crypto contano al loro valore iniziale gia' dall'inizio dello storico azioni:
+    # cosi' l'inserimento di oggi NON crea un falso aumento, si vede solo la crescita reale.
+    cry_base = sum(float(h.get("iniziale", 0)) for h in cry.get("holdings", []))
+
+    def _cry_at(d):
+        v = None
+        for e in sorted(h_c, key=lambda x: x["date"]):
+            if e["date"] <= d:
+                v = e["total"]
+            else:
+                break
+        return v if v is not None else cry_base
+
     dates = sorted(set([e["date"] for e in h_s] + [e["date"] for e in h_c]))
-    merged = [{"date": d, "total": round(_hist_total_at(h_s, d) + _hist_total_at(h_c, d))} for d in dates]
+    merged = [{"date": d, "total": round(_hist_total_at(h_s, d) + _cry_at(d))} for d in dates]
     lu = stk.get("last_update") or (merged[-1]["date"] if merged else None)
     if lu:
         merged = [m for m in merged if m["date"] != lu] + [{"date": lu, "total": round(now)}]
@@ -846,12 +860,12 @@ def render_overview(doc):
         st.altair_chart(chart, use_container_width=True)
     else:
         st.caption("Il grafico combinato crescerà a ogni aggiornamento dei prezzi.")
-    st.caption("Panoramica complessiva: somma di azioni (Yahoo Finance) e crypto (CoinGecko).")
+    st.caption("Somma di azioni (Yahoo Finance) e crypto (CoinGecko). Le crypto sono conteggiate al loro "
+               "valore iniziale fin dall'inizio: il grafico mostra la **crescita reale** degli asset, non "
+               "l'effetto dell'averle inserite oggi.")
 
 
-tab_all, tab_stk, tab_cry = st.tabs(["📊 Panoramica", "📈 Azioni", "🪙 Crypto"])
-with tab_all:
-    render_overview(doc)
+tab_stk, tab_cry, tab_all = st.tabs(["📈 Azioni", "🪙 Crypto", "📊 Panoramica"])
 with tab_stk:
     render_dashboard(doc, doc, "stk")
     render_stock_news()
@@ -859,6 +873,8 @@ with tab_cry:
     render_dashboard(doc["crypto"], doc, "cry")
     render_staking_projection(doc["crypto"])
     render_crypto_news()
+with tab_all:
+    render_overview(doc)
 
 st.divider()
 st.caption("🔒 Accesso privato: solo le persone con la password e invitate via email possono vedere "
