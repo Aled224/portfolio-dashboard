@@ -749,7 +749,109 @@ def render_crypto_news():
     _render_temi(temi)
 
 
-tab_stk, tab_cry = st.tabs(["📈 Azioni", "🪙 Crypto"])
+def _hist_total_at(hist, date):
+    v = 0.0
+    for e in sorted(hist, key=lambda x: x["date"]):
+        if e["date"] <= date:
+            v = e["total"]
+        else:
+            break
+    return v
+
+
+def render_overview(doc):
+    stk = doc
+    cry = doc.get("crypto", {}) or {}
+    rows_s, tot_s = compute(stk)
+    rows_c, tot_c = compute(cry)
+    init = tot_s["init"] + tot_c["init"]
+    now = tot_s["now"] + tot_c["now"]
+    pl = now - init
+    plpct = (pl / init * 100) if init else 0.0
+
+    st.subheader("💼 Totale investimenti")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Investito totale", eur(init))
+    c2.metric("Valore attuale", eur(now))
+    c3.metric("Guadagno / Perdita", eur(pl), pct(plpct))
+    c4.metric("Posizioni totali", len(rows_s) + len(rows_c))
+    st.divider()
+
+    # --- split Azioni vs Crypto ---
+    st.subheader("⚖️ Azioni vs Crypto")
+    ws = (tot_s["now"] / now * 100) if now else 0
+    wc = 100 - ws if now else 0
+    st.markdown(
+        "<div style='display:flex;height:22px;border-radius:999px;overflow:hidden;margin:6px 0'>"
+        f"<div style='width:{ws:.1f}%;background:#6c8cff'></div>"
+        f"<div style='width:{wc:.1f}%;background:#f7931a'></div></div>"
+        f"<div style='font-size:12px;color:#9aa0d0;margin-bottom:8px'>🟦 Azioni {num1(ws)}% &nbsp;·&nbsp; 🟧 Crypto {num1(wc)}%</div>",
+        unsafe_allow_html=True)
+    srows = ""
+    for label, tot in [("📈 Azioni", tot_s), ("🪙 Crypto", tot_c)]:
+        w = (tot["now"] / now * 100) if now else 0
+        srows += (f"<tr><td>{label}</td><td>{eur(tot['init'])}</td>"
+                  f"<td><b>{eur(tot['now'])}</b></td><td>{num1(w)}%</td>"
+                  f"<td>{vspan(tot['plpct'])}</td></tr>")
+    srows += (f"<tr class='tot'><td>TOTALE</td><td>{eur(init)}</td><td>{eur(now)}</td>"
+              f"<td>100%</td><td>{vspan(plpct)}</td></tr>")
+    st.markdown(
+        "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Classe</th><th>Investito</th>"
+        "<th>Valore attuale</th><th>Peso</th><th>Variazione</th></tr></thead>"
+        f"<tbody>{srows}</tbody></table></div>", unsafe_allow_html=True)
+    st.divider()
+
+    # --- tutte le posizioni ---
+    st.subheader("🧾 Tutte le posizioni")
+    allr = [(r, "Azioni", "#6c8cff") for r in rows_s] + [(r, "Crypto", "#f7931a") for r in rows_c]
+    allr.sort(key=lambda x: -x[0]["valore"])
+    body = ""
+    for r, cls, col in allr:
+        w = (r["valore"] / now * 100) if now else 0
+        pill = f"<span class='pill' style='background:{col}22;color:{col}'>{cls}</span>"
+        body += (f"<tr><td>{r['Titolo']}</td><td style='text-align:left'>{pill}</td>"
+                 f"<td>{eur(r['investito'])}</td><td><b>{eur(r['valore'])}</b></td>"
+                 f"<td>{num1(w)}%</td><td>{vspan(r['var'])}</td></tr>")
+    st.markdown(
+        "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th><th>Classe</th>"
+        "<th>Investito</th><th>Valore attuale</th><th>Peso</th><th>Variazione</th></tr></thead>"
+        f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
+    st.divider()
+
+    # --- andamento totale combinato ---
+    st.subheader("📈 Andamento totale (azioni + crypto)")
+    h_s = stk.get("history", []) or []
+    h_c = cry.get("history", []) or []
+    dates = sorted(set([e["date"] for e in h_s] + [e["date"] for e in h_c]))
+    merged = [{"date": d, "total": round(_hist_total_at(h_s, d) + _hist_total_at(h_c, d))} for d in dates]
+    lu = stk.get("last_update") or (merged[-1]["date"] if merged else None)
+    if lu:
+        merged = [m for m in merged if m["date"] != lu] + [{"date": lu, "total": round(now)}]
+        merged.sort(key=lambda x: x["date"])
+    if len(merged) >= 2:
+        hpts = pd.DataFrame([{"data": pd.to_datetime(m["date"]), "valore": m["total"]} for m in merged])
+        vmax = hpts["valore"].max()
+        hi = max(5000, -(-int(vmax) // 1000) * 1000)
+        ticks = list(range(0, hi + 1000, 1000))
+        chart = (alt.Chart(hpts)
+                 .mark_line(point=alt.OverlayMarkDef(color="#34d399", size=55), color="#34d399", strokeWidth=2.5)
+                 .encode(
+                     x=alt.X("data:T", sort="ascending", title=None,
+                             axis=alt.Axis(format="%d/%m", labelColor="#9aa0d0", grid=False)),
+                     y=alt.Y("valore:Q", title="€", scale=alt.Scale(domain=[0, hi]),
+                             axis=alt.Axis(values=ticks, labelColor="#9aa0d0", titleColor="#9aa0d0", gridColor="#2b3168")),
+                     tooltip=[alt.Tooltip("data:T", title="Data", format="%d/%m/%Y"),
+                              alt.Tooltip("valore:Q", title="Totale €", format=",.0f")])
+                 .properties(height=300).configure_view(strokeOpacity=0))
+        st.altair_chart(chart, use_container_width=True)
+    else:
+        st.caption("Il grafico combinato crescerà a ogni aggiornamento dei prezzi.")
+    st.caption("Panoramica complessiva: somma di azioni (Yahoo Finance) e crypto (CoinGecko).")
+
+
+tab_all, tab_stk, tab_cry = st.tabs(["📊 Panoramica", "📈 Azioni", "🪙 Crypto"])
+with tab_all:
+    render_overview(doc)
 with tab_stk:
     render_dashboard(doc, doc, "stk")
     render_stock_news()
