@@ -798,7 +798,7 @@ def render_overview(doc):
               f"<td>100%</td><td>{vspan(plpct)}</td></tr>")
     st.markdown(
         "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Classe</th><th>Investito</th>"
-        "<th>Valore attuale</th><th>Peso</th><th>Variazione</th></tr></thead>"
+        "<th>Valore attuale</th><th>Peso</th><th>Variazione<br><span style='font-weight:400;text-transform:none;font-size:10px'>vs valore iniziale</span></th></tr></thead>"
         f"<tbody>{srows}</tbody></table></div>", unsafe_allow_html=True)
     st.divider()
 
@@ -815,7 +815,7 @@ def render_overview(doc):
                  f"<td>{num1(w)}%</td><td>{vspan(r['var'])}</td></tr>")
     st.markdown(
         "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th><th>Classe</th>"
-        "<th>Investito</th><th>Valore attuale</th><th>Peso</th><th>Variazione</th></tr></thead>"
+        "<th>Investito</th><th>Valore attuale</th><th>Peso</th><th>Variazione<br><span style='font-weight:400;text-transform:none;font-size:10px'>vs valore iniziale</span></th></tr></thead>"
         f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
     st.divider()
 
