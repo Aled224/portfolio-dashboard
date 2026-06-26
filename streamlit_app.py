@@ -599,11 +599,11 @@ st.divider()
 
 # ------------------------------------------------------------------ radar news
 st.subheader("🔭 Nuovi spunti dal mercato", anchor=False)
-st.caption("Notizie pubbliche in tempo reale da centinaia di testate (Google News) più feed diretti dei "
-           "mercati. Tutto ciò che muove (o può muovere) i corsi: **IPO**, **acquisizioni e fusioni**, "
-           "**OPA e vendite**, **partnership e accordi**, **espansioni e nuove aperture**, **trimestrali "
-           "e utili**, **lanci e innovazione**, **startup e nuovi round**, **dividendi e buyback**, "
-           "**rating analisti**. Sono **spunti da approfondire, non consigli finanziari**: verifica sempre tu.")
+st.caption("Notizie pubbliche in tempo reale (Google News, centinaia di testate) **agganciate ai tuoi ambiti**: "
+           "ogni blocco mostra solo **eventi rilevanti per un investimento** (IPO, acquisizioni, fusioni, "
+           "partnership, round, aperture…) **dentro i settori in cui hai investito** — AI/Cloud, Auto "
+           "elettriche/Batterie, Mercati emergenti, Sanità, Azionario globale — più le **grandi operazioni "
+           "globali** lontane ma significative. Sono **spunti da approfondire, non consigli finanziari**.")
 
 
 @st.cache_data(ttl=10800, show_spinner=False)  # aggiorna ogni 3 ore
