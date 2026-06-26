@@ -600,8 +600,8 @@ st.divider()
 # ------------------------------------------------------------------ radar news
 st.subheader("🔭 Nuovi spunti dal mercato", anchor=False)
 st.caption("Notizie pubbliche in tempo reale su **IPO e quotazioni**, **acquisizioni e fusioni**, "
-           "**OPA e vendite**. Sono **spunti da approfondire, non consigli finanziari**: il link 🔎 apre "
-           "una ricerca del possibile titolo su Yahoo Finance, ma verifica sempre tu prima di decidere.")
+           "**OPA e vendite**. Sono **spunti da approfondire, non consigli finanziari**: "
+           "verifica sempre tu prima di decidere.")
 
 
 @st.cache_data(ttl=10800, show_spinner=False)  # aggiorna ogni 3 ore
@@ -636,8 +636,6 @@ else:
                 f"style='color:#e8ebff;text-decoration:none'>{n['titolo']}</a></div>"
                 f"<div class='advx'>{meta}<br>"
                 f"<a href='{n['link']}' target='_blank' style='color:#6c8cff'>↗ leggi la notizia</a>"
-                f" &nbsp;·&nbsp; "
-                f"<a href='{n['ticker']}' target='_blank' style='color:#ffcf5c'>🔎 cerca ticker</a>"
                 "</div></div>")
         st.markdown(f"<div class='advgrid'>{cards}</div>", unsafe_allow_html=True)
         st.write("")
