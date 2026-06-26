@@ -113,8 +113,8 @@ def _dedup(notizie, limite):
 # Temi cercati su Google News per il mondo CRYPTO.
 TEMI_CRYPTO = [
     ("Nuove crypto / Listing", "🆕",
-     '"new cryptocurrency" OR "token launch" OR "new listing" OR "nuova criptovaluta" OR '
-     'airdrop OR presale OR "token generation event"'),
+     '"new cryptocurrency" OR "new crypto token" OR "token listing" OR "crypto listing" OR '
+     '"nuova criptovaluta" OR "crypto airdrop" OR "token presale"'),
     ("Stati & Regolatori", "🏛️",
      '"crypto regulation" OR "approves crypto" OR "crypto law" OR "bitcoin legal tender" OR '
      '"crypto ban" OR "SEC crypto" OR "MiCA" OR "stablecoin law"'),

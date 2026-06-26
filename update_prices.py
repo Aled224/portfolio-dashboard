@@ -20,6 +20,7 @@ import os
 import requests
 
 import prices
+import news
 
 
 def log(msg):
@@ -92,7 +93,6 @@ def build_recap(data, info):
     base = hist[0] if hist else None
     prev = hist[-2] if len(hist) >= 2 else None
     L = []
-    L.append(f"📅 Aggiornamento al {itdate(today)}")
     parts = []
     if prev:
         d = total - prev["total"]
@@ -112,6 +112,28 @@ def build_recap(data, info):
     if info.get("add_tot", 0) > 0:
         L.append(f"💰 Versamenti inclusi: {_eur(info['add_tot'])}")
     return L
+
+
+def build_news_lines():
+    """Qualche titolo interessante (azioni + crypto) con link, per la mail."""
+    out = []
+    for fn, label in [(news.market_news, "Azioni"), (news.crypto_news, "Crypto")]:
+        try:
+            temi = fn(per_tema=2)
+            picked = []
+            for t in temi:
+                if t.get("notizie"):
+                    picked.append(t["notizie"][0])
+                if len(picked) >= 3:
+                    break
+            if picked:
+                out.append(f"— {label} —")
+                for n in picked[:3]:
+                    out.append(f"• {n['titolo']}")
+                    out.append(f"  {n['link']}")
+        except Exception as e:
+            log(f"News {label}: non disponibili ({repr(e)[:60]})")
+    return out
 
 
 def send_email(recap_lines, today):
@@ -152,9 +174,14 @@ def main():
             log("Cripto: aggiornamento non riuscito: " + repr(e)[:120])
     save_data(data, sha)
     log(f"Totale: {_eur(info['total'])} (al {itdate(info['today'])})")
-    recap = build_recap(data, info)
+    recap = [f"📅 Aggiornamento al {itdate(info['today'])}", "", "📈 AZIONI"]
+    recap += build_recap(data, info)
     if cinfo:
-        recap.append(f"🪙 Cripto: {_eur(cinfo['total'])}")
+        recap += ["", "🪙 CRYPTO"]
+        recap += build_recap(data["crypto"], cinfo)
+    news_lines = build_news_lines()
+    if news_lines:
+        recap += ["", "📰 NEWS INTERESSANTI DELLA SETTIMANA"] + news_lines
     for r in recap:
         log("RECAP • " + r)
     send_email(recap, info["today"])
