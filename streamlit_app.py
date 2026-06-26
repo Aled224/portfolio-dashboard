@@ -769,7 +769,24 @@ def render_overview(doc):
     pl = now - init
     plpct = (pl / init * 100) if init else 0.0
 
-    st.subheader("💼 Totale investimenti")
+    _top = st.columns([5, 1.4])
+    with _top[0]:
+        st.subheader("💼 Totale investimenti")
+    with _top[1]:
+        st.write("")
+        if st.button("📈 Aggiorna prezzi", key="all_refresh", use_container_width=True, type="primary",
+                     help="Aggiorna i prezzi di azioni e crypto"):
+            with st.spinner("Scarico i prezzi di mercato..."):
+                try:
+                    prices.update_prices_in_data(doc, log=lambda *_: None)
+                    if isinstance(doc.get("crypto"), dict) and doc["crypto"].get("holdings"):
+                        prices.update_prices_in_data(doc["crypto"], log=lambda *_: None)
+                    save_data(doc)
+                    refresh()
+                    st.success("Prezzi aggiornati!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Aggiornamento non riuscito: {e}")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Investito totale", eur(init))
     c2.metric("Valore attuale", eur(now))
