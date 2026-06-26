@@ -156,14 +156,13 @@ CRYPTO_DEFAULT = {
     "base_date": "2026-06-26",
     "last_update": "2026-06-26",
     "holdings": [
-        {"id": "sol", "nome": "Solana (SOL)", "sym": "SOL-EUR", "ccy": "EUR", "iniziale": 2853.45, "cat": "Layer 1"},
+        {"id": "sol", "nome": "Solana (SOL)", "sym": "SOL-EUR", "ccy": "EUR", "iniziale": 2856.22, "cat": "Layer 1"},
         {"id": "wld", "nome": "Worldcoin (WLD)", "sym": "WLD-USD", "ccy": "USD", "iniziale": 167.14, "cat": "AI / Identity"},
-        {"id": "strk", "nome": "Starknet (STRK)", "sym": "STRK-USD", "ccy": "USD", "iniziale": 2.77, "cat": "Layer 2 / ZK"},
     ],
-    "baseline_prices": {"sol": 62.40, "wld": 0.405853, "strk": 0.02533693},
-    "current": {"sol": 2853.45, "wld": 167.14, "strk": 2.77},
+    "baseline_prices": {"sol": 62.40, "wld": 0.405853},
+    "current": {"sol": 2856.22, "wld": 167.14},
     "pac": {},
-    "cat_target": {"Layer 1": 94, "AI / Identity": 5, "Layer 2 / ZK": 1},
+    "cat_target": {"Layer 1": 95, "AI / Identity": 5},
     "history": [],
     "momentum": {},
 }
@@ -173,13 +172,30 @@ try:
 except Exception as e:
     st.error(f"Non riesco a leggere i dati. Controlla i Secrets (github_token, github_repo). Dettaglio: {e}")
     st.stop()
-if not isinstance(doc.get("crypto"), dict) or not doc.get("crypto", {}).get("holdings"):
+_cry = doc.get("crypto")
+if not isinstance(_cry, dict) or not _cry.get("holdings"):
     doc["crypto"] = CRYPTO_DEFAULT
     try:
-        save_data(doc)
-        refresh()
+        save_data(doc); refresh()
     except Exception:
         pass
+else:
+    _strk = next((h for h in _cry["holdings"] if h.get("id") == "strk"), None)
+    if _strk:
+        _sol = next((h for h in _cry["holdings"] if h.get("id") == "sol"), None)
+        _cur = _cry.setdefault("current", {})
+        _bp = _cry.setdefault("baseline_prices", {})
+        if _sol:
+            _sol["iniziale"] = round(float(_sol.get("iniziale", 0)) + float(_strk.get("iniziale", 0)), 2)
+            _cur["sol"] = round(float(_cur.get("sol", _sol["iniziale"])) + float(_cur.get("strk", 0)), 2)
+        _cry["holdings"] = [h for h in _cry["holdings"] if h.get("id") != "strk"]
+        _cur.pop("strk", None); _bp.pop("strk", None)
+        _cry.get("cat_target", {}).pop("Layer 2 / ZK", None)
+        _cry.get("pac", {}).pop("strk", None)
+        try:
+            save_data(doc); refresh()
+        except Exception:
+            pass
 
 st.markdown("""
 <style>
@@ -258,126 +274,129 @@ def render_dashboard(ds, doc, ns):
         dot = (f"<span style='display:inline-block;width:10px;height:10px;border-radius:50%;"
                f"background:{col};margin-right:8px;vertical-align:middle'></span>")
         pill = f"<span class='pill' style='background:{col}22;color:{col}'>{r['Categoria']}</span>"
-        body += (f"<tr><td>{dot}{r['Titolo']}</td>"
-                 f"<td style='text-align:left'>{pill}</td>"
-                 f"<td>{eur(r['iniziale'])}</td>"
+        catcell = f"<td style='text-align:left'>{pill}</td>" if ns != "cry" else ""
+        body += (f"<tr><td>{dot}{r['Titolo']}</td>" + catcell
+                 + f"<td>{eur(r['iniziale'])}</td>"
                  f"<td>{eur(r['aggiunte']) if r['aggiunte'] else '–'}</td>"
                  f"<td>{eur(r['investito'])}</td>"
                  f"<td><b>{eur(r['valore'])}</b></td>"
                  f"<td>{vspan(r['var'])}</td></tr>")
-    body += (f"<tr class='tot'><td>TOTALE</td><td></td><td>{eur(totals['iniz'])}</td>"
+    body += (f"<tr class='tot'><td>TOTALE</td>" + ("<td></td>" if ns != "cry" else "")
+             + f"<td>{eur(totals['iniz'])}</td>"
              f"<td>{eur(totals['add'])}</td><td>{eur(totals['init'])}</td>"
              f"<td>{eur(totals['now'])}</td><td>{vspan(totals['plpct'])}</td></tr>")
     sub = "<span style='font-weight:400;text-transform:none;font-size:10px'>"
     st.markdown(
-        "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th><th>Categoria</th>"
-        f"<th>Valore iniziale<br>{sub}{itdate(base_date)}</span></th><th>Aggiunte</th>"
+        "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th>"
+        + ("<th>Categoria</th>" if ns != "cry" else "")
+        + f"<th>Valore iniziale<br>{sub}{itdate(base_date)}</span></th><th>Aggiunte</th>"
         f"<th>Investito</th><th>Valore attuale<br>{sub}al {itdate(last_update)}</span></th>"
         f"<th>Variazione<br>{sub}al {itdate(last_update)}</span></th></tr></thead>"
         f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
 
-    # ------------------------------------------------------------------ aggiungi PAC
-    st.subheader("➕ Registra un versamento (piano d'accumulo)")
-    with st.form(f"{ns}_add_pac", clear_on_submit=True):
-        fc = st.columns([3, 2, 2])
-        sel = fc[0].selectbox("Titolo", options=[h["id"] for h in holdings],
-                              format_func=lambda i: by_id(holdings, i)["nome"], key=f"{ns}_pac_sel")
-        amount = fc[1].number_input("Importo (€)", min_value=0.0, step=10.0, value=0.0, key=f"{ns}_pac_amt")
-        fc[2].write("")
-        fc[2].write("")
-        if fc[2].form_submit_button("Conferma versamento", use_container_width=True):
-            if amount and amount > 0:
-                h = by_id(holdings, sel)
-                cur = float(data.get("current", {}).get(sel, h["iniziale"]))
-                idx = (cur / h["iniziale"]) if h["iniziale"] else 1.0
-                today = datetime.date.today().isoformat()
-                ts = int(datetime.datetime.now().timestamp() * 1000)
-                data.setdefault("pac", {})
-                lst = data["pac"].get(sel)
-                if not isinstance(lst, list):
-                    lst = []
-                lst.append({"a": float(amount), "d": today, "idx": idx, "ts": ts})
-                data["pac"][sel] = lst
-                try:
-                    save_data(doc)
-                    st.success(f"Aggiunto + {eur(amount)} su {h['nome']}.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Errore nel salvataggio: {e}")
-            else:
-                st.warning("Inserisci un importo maggiore di zero.")
+    if ns != "cry":
+        # ------------------------------------------------------------------ aggiungi PAC
+        st.subheader("➕ Registra un versamento (piano d'accumulo)")
+        with st.form(f"{ns}_add_pac", clear_on_submit=True):
+            fc = st.columns([3, 2, 2])
+            sel = fc[0].selectbox("Titolo", options=[h["id"] for h in holdings],
+                                  format_func=lambda i: by_id(holdings, i)["nome"], key=f"{ns}_pac_sel")
+            amount = fc[1].number_input("Importo (€)", min_value=0.0, step=10.0, value=0.0, key=f"{ns}_pac_amt")
+            fc[2].write("")
+            fc[2].write("")
+            if fc[2].form_submit_button("Conferma versamento", use_container_width=True):
+                if amount and amount > 0:
+                    h = by_id(holdings, sel)
+                    cur = float(data.get("current", {}).get(sel, h["iniziale"]))
+                    idx = (cur / h["iniziale"]) if h["iniziale"] else 1.0
+                    today = datetime.date.today().isoformat()
+                    ts = int(datetime.datetime.now().timestamp() * 1000)
+                    data.setdefault("pac", {})
+                    lst = data["pac"].get(sel)
+                    if not isinstance(lst, list):
+                        lst = []
+                    lst.append({"a": float(amount), "d": today, "idx": idx, "ts": ts})
+                    data["pac"][sel] = lst
+                    try:
+                        save_data(doc)
+                        st.success(f"Aggiunto + {eur(amount)} su {h['nome']}.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Errore nel salvataggio: {e}")
+                else:
+                    st.warning("Inserisci un importo maggiore di zero.")
 
-    tranches_all = []
-    for h in holdings:
-        for i, t in enumerate(data.get("pac", {}).get(h["id"], []) or []):
-            tranches_all.append((h, i, t))
-    if tranches_all:
-        with st.expander(f"📋 Versamenti registrati ({len(tranches_all)})"):
-            for h, i, t in sorted(tranches_all, key=lambda x: x[2].get("ts", 0), reverse=True):
-                lc = st.columns([6, 1])
-                lc[0].write(f"📅 {itdate(t.get('d'))} · **{h['nome']}** · + {eur(t.get('a', 0))}")
-                if lc[1].button("Rimuovi", key=f"{ns}_rm_{h['id']}_{i}", use_container_width=True):
-                    lst = data["pac"].get(h["id"], [])
-                    if 0 <= i < len(lst):
-                        lst.pop(i)
-                        if lst:
-                            data["pac"][h["id"]] = lst
-                        else:
-                            data["pac"].pop(h["id"], None)
-                        try:
-                            save_data(doc)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Errore: {e}")
+        tranches_all = []
+        for h in holdings:
+            for i, t in enumerate(data.get("pac", {}).get(h["id"], []) or []):
+                tranches_all.append((h, i, t))
+        if tranches_all:
+            with st.expander(f"📋 Versamenti registrati ({len(tranches_all)})"):
+                for h, i, t in sorted(tranches_all, key=lambda x: x[2].get("ts", 0), reverse=True):
+                    lc = st.columns([6, 1])
+                    lc[0].write(f"📅 {itdate(t.get('d'))} · **{h['nome']}** · + {eur(t.get('a', 0))}")
+                    if lc[1].button("Rimuovi", key=f"{ns}_rm_{h['id']}_{i}", use_container_width=True):
+                        lst = data["pac"].get(h["id"], [])
+                        if 0 <= i < len(lst):
+                            lst.pop(i)
+                            if lst:
+                                data["pac"][h["id"]] = lst
+                            else:
+                                data["pac"].pop(h["id"], None)
+                            try:
+                                save_data(doc)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Errore: {e}")
 
-    st.divider()
+        st.divider()
 
-    # ------------------------------------------------------------------ categorie
-    st.subheader("🎯 Peso e Target per categoria")
-    cat_now = {}
-    for r in rows:
-        cat_now[r["Categoria"]] = cat_now.get(r["Categoria"], 0.0) + r["valore"]
-    tot_now = totals["now"] or 1
-    order = sorted(cat_now, key=lambda n: -cat_now[n])
-    scale = max([cat_now[n] / tot_now * 100 for n in order] + [cat_target.get(n, 0) for n in order] + [1])
+        # ------------------------------------------------------------------ categorie
+        st.subheader("🎯 Peso e Target per categoria")
+        cat_now = {}
+        for r in rows:
+            cat_now[r["Categoria"]] = cat_now.get(r["Categoria"], 0.0) + r["valore"]
+        tot_now = totals["now"] or 1
+        order = sorted(cat_now, key=lambda n: -cat_now[n])
+        scale = max([cat_now[n] / tot_now * 100 for n in order] + [cat_target.get(n, 0) for n in order] + [1])
 
-    bars = ""
-    for name in order:
-        peso = cat_now[name] / tot_now * 100
-        tgt = cat_target.get(name, 0)
-        col = colors.get(name, "#888")
-        bars += (
-            "<div class='catbar'>"
-            f"<div style='color:{col};font-weight:700'>{name}</div>"
-            "<div style='background:#171a35;border-radius:999px;height:20px;position:relative;overflow:hidden'>"
-            f"<div style='height:100%;width:{peso/scale*100:.1f}%;background:{col};border-radius:999px'></div>"
-            f"<div style='position:absolute;top:-2px;bottom:-2px;left:{tgt/scale*100:.1f}%;width:2px;background:{GOLD}'></div>"
-            "</div>"
-            f"<div style='color:{MUTED};font-size:13px'>{num1(peso)}% <span style='opacity:.6'>/ {tgt}%</span></div>"
-            "</div>")
-    st.markdown(bars + f"<div style='color:{MUTED};font-size:12px;margin-top:6px'>"
-                f"La linea oro indica il target di ogni categoria.</div>", unsafe_allow_html=True)
+        bars = ""
+        for name in order:
+            peso = cat_now[name] / tot_now * 100
+            tgt = cat_target.get(name, 0)
+            col = colors.get(name, "#888")
+            bars += (
+                "<div class='catbar'>"
+                f"<div style='color:{col};font-weight:700'>{name}</div>"
+                "<div style='background:#171a35;border-radius:999px;height:20px;position:relative;overflow:hidden'>"
+                f"<div style='height:100%;width:{peso/scale*100:.1f}%;background:{col};border-radius:999px'></div>"
+                f"<div style='position:absolute;top:-2px;bottom:-2px;left:{tgt/scale*100:.1f}%;width:2px;background:{GOLD}'></div>"
+                "</div>"
+                f"<div style='color:{MUTED};font-size:13px'>{num1(peso)}% <span style='opacity:.6'>/ {tgt}%</span></div>"
+                "</div>")
+        st.markdown(bars + f"<div style='color:{MUTED};font-size:12px;margin-top:6px'>"
+                    f"La linea oro indica il target di ogni categoria.</div>", unsafe_allow_html=True)
 
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    st.caption("Apri una categoria per vederne la composizione:")
-    for name in order:
-        peso = cat_now[name] / tot_now * 100
-        tgt = cat_target.get(name, 0)
-        scost = peso - tgt
-        seg = "🟢" if scost >= 0 else "🔴"
-        with st.expander(f"{name}  ·  {num1(peso)}% / target {tgt}%  ·  scostamento {pct(scost)} {seg}"):
-            sub = [r for r in rows if r["Categoria"] == name]
-            srows = ""
-            for r in sub:
-                wp = r["valore"] / tot_now * 100
-                srows += (f"<tr><td>{r['Titolo']}</td><td>{eur(r['valore'])}</td>"
-                          f"<td>{num1(wp)}%</td><td>{vspan(r['var'])}</td></tr>")
-            st.markdown(
-                "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th><th>Valore attuale</th><th>Peso</th>"
-                f"<th>Variazione valore</th></tr></thead><tbody>{srows}</tbody></table></div>",
-                unsafe_allow_html=True)
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        st.caption("Apri una categoria per vederne la composizione:")
+        for name in order:
+            peso = cat_now[name] / tot_now * 100
+            tgt = cat_target.get(name, 0)
+            scost = peso - tgt
+            seg = "🟢" if scost >= 0 else "🔴"
+            with st.expander(f"{name}  ·  {num1(peso)}% / target {tgt}%  ·  scostamento {pct(scost)} {seg}"):
+                sub = [r for r in rows if r["Categoria"] == name]
+                srows = ""
+                for r in sub:
+                    wp = r["valore"] / tot_now * 100
+                    srows += (f"<tr><td>{r['Titolo']}</td><td>{eur(r['valore'])}</td>"
+                              f"<td>{num1(wp)}%</td><td>{vspan(r['var'])}</td></tr>")
+                st.markdown(
+                    "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th><th>Valore attuale</th><th>Peso</th>"
+                    f"<th>Variazione valore</th></tr></thead><tbody>{srows}</tbody></table></div>",
+                    unsafe_allow_html=True)
 
-    st.divider()
+        st.divider()
 
     # ------------------------------------------------------------------ storico
     st.subheader("📈 Andamento del valore totale")
@@ -479,184 +498,163 @@ def render_dashboard(ds, doc, ns):
     else:
         st.caption("Storico non disponibile per questo titolo al momento.")
 
-    st.divider()
+    if ns != "cry":
+        st.divider()
 
-    # ------------------------------------------------------------------ spunti
-    st.subheader("💡 Spunti di portafoglio", anchor=False)
-    st.caption("Spunti automatici basati sui tuoi target e sullo **storico completo dei titoli** (1 mese, 3, 6, 1 anno e "
-               "intero storico disponibile), non solo sul tuo breve periodo di possesso. Ispirati a metodi di gestione del "
-               "portafoglio e del rischio. **Non sono consigli finanziari**: sono osservazioni oggettive per ragionare.")
+        # ------------------------------------------------------------------ spunti
+        st.subheader("💡 Spunti di portafoglio", anchor=False)
+        st.caption("Spunti automatici basati sui tuoi target e sullo **storico completo dei titoli** (1 mese, 3, 6, 1 anno e "
+                   "intero storico disponibile), non solo sul tuo breve periodo di possesso. Ispirati a metodi di gestione del "
+                   "portafoglio e del rischio. **Non sono consigli finanziari**: sono osservazioni oggettive per ragionare.")
 
-    tot = totals["now"] or 1
-    advice = []
-    devs = sorted(((n, cat_now[n] / tot * 100 - cat_target.get(n, 0)) for n in cat_now), key=lambda x: x[1])
-    if devs and devs[0][1] <= -3:
-        n = devs[0][0]
-        advice.append(("🎯", "blue", f"Sotto target: {n}",
-                       f"Pesa il {num1(cat_now[n]/tot*100)}% contro un target del {cat_target.get(n, 0)}%. "
-                       "È la categoria più sotto i tuoi obiettivi: possibile candidata per il prossimo versamento."))
-    if devs and devs[-1][1] >= 3:
-        n = devs[-1][0]
-        advice.append(("⚖️", "gold", f"Sopra target: {n}",
-                       f"Pesa il {num1(cat_now[n]/tot*100)}% contro un target del {cat_target.get(n, 0)}%. "
-                       "Aggiungere altro qui ti allontanerebbe dall'equilibrio che hai scelto per le categorie."))
-    if rows:
-        mr = max(rows, key=lambda r: r["valore"])
-        w = mr["valore"] / tot * 100
-        mr_tgt = cat_target.get(mr["Categoria"], 0)
-        if w >= 30 and w > mr_tgt:
-            advice.append(("⚠️", "red", f"Concentrazione: {mr['Titolo']}",
-                           f"Da solo pesa il {num1(w)}% del portafoglio, più del target della sua categoria ({mr_tgt}%): "
-                           "una posizione così grande amplifica gli effetti, in bene e in male, di un singolo titolo."))
-        ps = sorted(rows, key=lambda r: r["var"])
-        if ps[0]["var"] <= -3:
-            advice.append(("🔻", "red", f"In calo dal 29/05: {ps[0]['Titolo']} ({pct(ps[0]['var'])})",
-                           "È il titolo più in calo da quando hai investito. Pochi giorni dicono poco: "
-                           "guarda anche l'andamento di lungo periodo qui sopra prima di trarre conclusioni."))
-        if ps[-1]["var"] >= 3:
-            advice.append(("🚀", "green", f"In rialzo dal 29/05: {ps[-1]['Titolo']} ({pct(ps[-1]['var'])})",
-                           "È quello salito di più da quando hai investito: occhio a non lasciarlo diventare "
-                           "una fetta troppo grande del portafoglio."))
-    advice.append(("📊", "green" if totals["plpct"] >= 0 else "red", "Andamento generale",
-                   f"Portafoglio a {eur(totals['now'])} ({pct(totals['plpct'])} dal {itdate(base_date)}). " +
-                   ("In positivo: di solito la cosa più utile è la costanza dei versamenti."
-                    if totals["plpct"] >= 0 else
-                    "In rosso nel breve è normale: contano l'orizzonte lungo e la disciplina.")))
+        tot = totals["now"] or 1
+        advice = []
+        devs = sorted(((n, cat_now[n] / tot * 100 - cat_target.get(n, 0)) for n in cat_now), key=lambda x: x[1])
+        if devs and devs[0][1] <= -3:
+            n = devs[0][0]
+            advice.append(("🎯", "blue", f"Sotto target: {n}",
+                           f"Pesa il {num1(cat_now[n]/tot*100)}% contro un target del {cat_target.get(n, 0)}%. "
+                           "È la categoria più sotto i tuoi obiettivi: possibile candidata per il prossimo versamento."))
+        if devs and devs[-1][1] >= 3:
+            n = devs[-1][0]
+            advice.append(("⚖️", "gold", f"Sopra target: {n}",
+                           f"Pesa il {num1(cat_now[n]/tot*100)}% contro un target del {cat_target.get(n, 0)}%. "
+                           "Aggiungere altro qui ti allontanerebbe dall'equilibrio che hai scelto per le categorie."))
+        if rows:
+            mr = max(rows, key=lambda r: r["valore"])
+            w = mr["valore"] / tot * 100
+            mr_tgt = cat_target.get(mr["Categoria"], 0)
+            if w >= 30 and w > mr_tgt:
+                advice.append(("⚠️", "red", f"Concentrazione: {mr['Titolo']}",
+                               f"Da solo pesa il {num1(w)}% del portafoglio, più del target della sua categoria ({mr_tgt}%): "
+                               "una posizione così grande amplifica gli effetti, in bene e in male, di un singolo titolo."))
+            ps = sorted(rows, key=lambda r: r["var"])
+            if ps[0]["var"] <= -3:
+                advice.append(("🔻", "red", f"In calo dal 29/05: {ps[0]['Titolo']} ({pct(ps[0]['var'])})",
+                               "È il titolo più in calo da quando hai investito. Pochi giorni dicono poco: "
+                               "guarda anche l'andamento di lungo periodo qui sopra prima di trarre conclusioni."))
+            if ps[-1]["var"] >= 3:
+                advice.append(("🚀", "green", f"In rialzo dal 29/05: {ps[-1]['Titolo']} ({pct(ps[-1]['var'])})",
+                               "È quello salito di più da quando hai investito: occhio a non lasciarlo diventare "
+                               "una fetta troppo grande del portafoglio."))
+        advice.append(("📊", "green" if totals["plpct"] >= 0 else "red", "Andamento generale",
+                       f"Portafoglio a {eur(totals['now'])} ({pct(totals['plpct'])} dal {itdate(base_date)}). " +
+                       ("In positivo: di solito la cosa più utile è la costanza dei versamenti."
+                        if totals["plpct"] >= 0 else
+                        "In rosso nel breve è normale: contano l'orizzonte lungo e la disciplina.")))
 
-    # spunti avanzati: visione completa (1m/3m/6m/1a + intero storico),
-    # calcolati e salvati a ogni aggiornamento dei dati (niente download in diretta)
-    moms = data.get("momentum", {})
-    name_of = {h["id"]: h["nome"] for h in holdings}
-    valid = {hid: m for hid, m in moms.items() if m and m.get("m12") is not None}
-
-
-    def _fmt_h(m):
-        parts = [f"{lab} {pct(m[k])}" for k, lab in
-                 [("m1", "1m"), ("m3", "3m"), ("m6", "6m"), ("m12", "1a")] if m.get(k) is not None]
-        return " · ".join(parts)
+        # spunti avanzati: visione completa (1m/3m/6m/1a + intero storico),
+        # calcolati e salvati a ogni aggiornamento dei dati (niente download in diretta)
+        moms = data.get("momentum", {})
+        name_of = {h["id"]: h["nome"] for h in holdings}
+        valid = {hid: m for hid, m in moms.items() if m and m.get("m12") is not None}
 
 
-    def _hz(m, *keys):
-        return all(m.get(k) is not None for k in keys)
+        def _fmt_h(m):
+            parts = [f"{lab} {pct(m[k])}" for k, lab in
+                     [("m1", "1m"), ("m3", "3m"), ("m6", "6m"), ("m12", "1a")] if m.get(k) is not None]
+            return " · ".join(parts)
 
 
-    if valid:
-        # 1) Forte e COSTANTE: su a 3, 6 e 12 mesi (non un singolo colpo)
-        solid = [hid for hid in valid if _hz(valid[hid], "m3", "m6", "m12")
-                 and valid[hid]["m12"] > 0 and valid[hid]["m6"] > 0 and valid[hid]["m3"] > 0]
-        if solid:
-            hid = max(solid, key=lambda k: valid[k]["m6"])
-            advice.append(("📈", "green", f"Forte e costante: {name_of[hid]}",
-                           f"In rialzo su tutti gli orizzonti ({_fmt_h(valid[hid])}): trend coerente, "
-                           "non un rimbalzo isolato."))
-        # 2) Corsa poi RITRACCIAMENTO: su sull'anno ma giù a 6 mesi (es. titoli volatili)
-        runpull = [hid for hid in valid if _hz(valid[hid], "m6", "m12")
-                   and valid[hid]["m12"] > 0 and valid[hid]["m6"] < 0]
-        if runpull:
-            hid = max(runpull, key=lambda k: valid[k]["m12"])
-            allp = valid[hid].get("all")
-            st_txt = (f" Sull'intero storico ({valid[hid]['years']} anni): {pct(allp)}."
-                      if allp is not None else "")
-            advice.append(("🎢", "gold", f"Corsa e ritracciamento: {name_of[hid]}",
-                           f"Ha corso sull'anno ({pct(valid[hid]['m12'])}) ma sta ritracciando "
-                           f"({pct(valid[hid]['m6'])} a 6 mesi → {_fmt_h(valid[hid])}).{st_txt} "
-                           "Tipico dei titoli volatili/speculativi: occhio agli alti e bassi, non guardare solo il +1 anno."))
-        # 3) Debole nell'ultimo anno: giù a 12 mesi (con contesto sull'intero storico)
-        weak = min((hid for hid in valid if valid[hid].get("m12") is not None),
-                   key=lambda k: valid[k]["m12"], default=None)
-        if weak is not None and valid[weak]["m12"] < 0:
-            allp = valid[weak].get("all")
-            if allp is not None and allp >= 0:
-                tone = "gold"
-                ctx = (f" Sull'intero storico ({valid[weak]['years']} anni) resta però positivo ({pct(allp)}): "
-                       "un calo recente dentro una storia più lunga in crescita, da leggere nel contesto.")
-            elif allp is not None:
-                tone = "red"
-                ctx = (f" Anche sull'intero storico ({valid[weak]['years']} anni) è in perdita ({pct(allp)}): "
-                       "debolezza più strutturale, chiediti se la tesi iniziale regge ancora.")
-            else:
-                tone = "red"
-                ctx = " Vale la pena chiedersi se la tesi iniziale regge ancora."
-            advice.append(("📉", tone, f"Debole nell'ultimo anno: {name_of[weak]}",
-                           f"{pct(valid[weak]['m12'])} in 12 mesi ({_fmt_h(valid[weak])}).{ctx}"))
-        # 4) Ampiezza dell'ultimo mese
-        m1_vals = {hid: m["m1"] for hid, m in valid.items() if m.get("m1") is not None}
-        if m1_vals:
-            up = sum(1 for v in m1_vals.values() if v > 0)
-            n = len(m1_vals)
-            if up / n >= 0.7:
-                advice.append(("🌅", "green", "Ampiezza positiva (ultimo mese)",
-                               f"{up} titoli su {n} in rialzo: forza diffusa, fase favorevole."))
-            elif up / n <= 0.3:
-                advice.append(("🛡️", "gold", "Fase difensiva (ultimo mese)",
-                               f"Solo {up} su {n} in rialzo: mercato debole, meglio esposizione prudente."))
-            else:
-                advice.append(("🔀", "blue", "Quadro misto (ultimo mese)",
-                               f"{up} su {n} in rialzo: nessuna direzione netta nel breve."))
-        # 5) In raffreddamento: solido (anno e 6 mesi su) ma giù nell'ultimo mese
-        cooling = [hid for hid in valid if _hz(valid[hid], "m1", "m6", "m12")
-                   and valid[hid]["m12"] > 0 and valid[hid]["m6"] > 0 and valid[hid]["m1"] < 0]
-        if cooling:
-            hid = min(cooling, key=lambda k: valid[k]["m1"])
-            advice.append(("🌡️", "gold", f"In raffreddamento: {name_of[hid]}",
-                           f"Solido sull'anno e a 6 mesi ma in calo nell'ultimo mese "
-                           f"({pct(valid[hid]['m1'])}): rallentamento recente da tenere d'occhio."))
-        # 6) Possibile ripresa: debole sull'anno ma su nell'ultimo mese
-        rec = [hid for hid in valid if _hz(valid[hid], "m1", "m12")
-               and valid[hid]["m12"] < 0 and valid[hid]["m1"] > 0]
-        if rec:
-            hid = max(rec, key=lambda k: valid[k]["m1"])
-            advice.append(("🌱", "green", f"Possibile ripresa: {name_of[hid]}",
-                           f"Debole sull'anno ({pct(valid[hid]['m12'])}) ma in rialzo nell'ultimo mese "
-                           f"({pct(valid[hid]['m1'])}): primo segnale di inversione, da confermare."))
-
-    tone_col = {"green": GREEN, "red": RED, "blue": "#6c8cff", "gold": GOLD}
-    cards = ""
-    for icon, tone, title, text in advice:
-        c = tone_col.get(tone, "#6c8cff")
-        cards += (f"<div class='advcard' style='border-left:4px solid {c}'>"
-                  f"<div class='advt'>{icon} {title}</div><div class='advx'>{text}</div></div>")
-    st.markdown(f"<div class='advgrid'>{cards}</div>", unsafe_allow_html=True)
-    st.caption("⚠️ Informazioni a scopo educativo, non consulenza finanziaria. Le decisioni restano tue.")
+        def _hz(m, *keys):
+            return all(m.get(k) is not None for k in keys)
 
 
+        if valid:
+            # 1) Forte e COSTANTE: su a 3, 6 e 12 mesi (non un singolo colpo)
+            solid = [hid for hid in valid if _hz(valid[hid], "m3", "m6", "m12")
+                     and valid[hid]["m12"] > 0 and valid[hid]["m6"] > 0 and valid[hid]["m3"] > 0]
+            if solid:
+                hid = max(solid, key=lambda k: valid[k]["m6"])
+                advice.append(("📈", "green", f"Forte e costante: {name_of[hid]}",
+                               f"In rialzo su tutti gli orizzonti ({_fmt_h(valid[hid])}): trend coerente, "
+                               "non un rimbalzo isolato."))
+            # 2) Corsa poi RITRACCIAMENTO: su sull'anno ma giù a 6 mesi (es. titoli volatili)
+            runpull = [hid for hid in valid if _hz(valid[hid], "m6", "m12")
+                       and valid[hid]["m12"] > 0 and valid[hid]["m6"] < 0]
+            if runpull:
+                hid = max(runpull, key=lambda k: valid[k]["m12"])
+                allp = valid[hid].get("all")
+                st_txt = (f" Sull'intero storico ({valid[hid]['years']} anni): {pct(allp)}."
+                          if allp is not None else "")
+                advice.append(("🎢", "gold", f"Corsa e ritracciamento: {name_of[hid]}",
+                               f"Ha corso sull'anno ({pct(valid[hid]['m12'])}) ma sta ritracciando "
+                               f"({pct(valid[hid]['m6'])} a 6 mesi → {_fmt_h(valid[hid])}).{st_txt} "
+                               "Tipico dei titoli volatili/speculativi: occhio agli alti e bassi, non guardare solo il +1 anno."))
+            # 3) Debole nell'ultimo anno: giù a 12 mesi (con contesto sull'intero storico)
+            weak = min((hid for hid in valid if valid[hid].get("m12") is not None),
+                       key=lambda k: valid[k]["m12"], default=None)
+            if weak is not None and valid[weak]["m12"] < 0:
+                allp = valid[weak].get("all")
+                if allp is not None and allp >= 0:
+                    tone = "gold"
+                    ctx = (f" Sull'intero storico ({valid[weak]['years']} anni) resta però positivo ({pct(allp)}): "
+                           "un calo recente dentro una storia più lunga in crescita, da leggere nel contesto.")
+                elif allp is not None:
+                    tone = "red"
+                    ctx = (f" Anche sull'intero storico ({valid[weak]['years']} anni) è in perdita ({pct(allp)}): "
+                           "debolezza più strutturale, chiediti se la tesi iniziale regge ancora.")
+                else:
+                    tone = "red"
+                    ctx = " Vale la pena chiedersi se la tesi iniziale regge ancora."
+                advice.append(("📉", tone, f"Debole nell'ultimo anno: {name_of[weak]}",
+                               f"{pct(valid[weak]['m12'])} in 12 mesi ({_fmt_h(valid[weak])}).{ctx}"))
+            # 4) Ampiezza dell'ultimo mese
+            m1_vals = {hid: m["m1"] for hid, m in valid.items() if m.get("m1") is not None}
+            if m1_vals:
+                up = sum(1 for v in m1_vals.values() if v > 0)
+                n = len(m1_vals)
+                if up / n >= 0.7:
+                    advice.append(("🌅", "green", "Ampiezza positiva (ultimo mese)",
+                                   f"{up} titoli su {n} in rialzo: forza diffusa, fase favorevole."))
+                elif up / n <= 0.3:
+                    advice.append(("🛡️", "gold", "Fase difensiva (ultimo mese)",
+                                   f"Solo {up} su {n} in rialzo: mercato debole, meglio esposizione prudente."))
+                else:
+                    advice.append(("🔀", "blue", "Quadro misto (ultimo mese)",
+                                   f"{up} su {n} in rialzo: nessuna direzione netta nel breve."))
+            # 5) In raffreddamento: solido (anno e 6 mesi su) ma giù nell'ultimo mese
+            cooling = [hid for hid in valid if _hz(valid[hid], "m1", "m6", "m12")
+                       and valid[hid]["m12"] > 0 and valid[hid]["m6"] > 0 and valid[hid]["m1"] < 0]
+            if cooling:
+                hid = min(cooling, key=lambda k: valid[k]["m1"])
+                advice.append(("🌡️", "gold", f"In raffreddamento: {name_of[hid]}",
+                               f"Solido sull'anno e a 6 mesi ma in calo nell'ultimo mese "
+                               f"({pct(valid[hid]['m1'])}): rallentamento recente da tenere d'occhio."))
+            # 6) Possibile ripresa: debole sull'anno ma su nell'ultimo mese
+            rec = [hid for hid in valid if _hz(valid[hid], "m1", "m12")
+                   and valid[hid]["m12"] < 0 and valid[hid]["m1"] > 0]
+            if rec:
+                hid = max(rec, key=lambda k: valid[k]["m1"])
+                advice.append(("🌱", "green", f"Possibile ripresa: {name_of[hid]}",
+                               f"Debole sull'anno ({pct(valid[hid]['m12'])}) ma in rialzo nell'ultimo mese "
+                               f"({pct(valid[hid]['m1'])}): primo segnale di inversione, da confermare."))
 
-tab_stk, tab_cry = st.tabs(["📈 Azioni", "🪙 Cripto"])
-with tab_stk:
-    render_dashboard(doc, doc, "stk")
-with tab_cry:
-    render_dashboard(doc["crypto"], doc, "cry")
-
-st.divider()
-
-# ------------------------------------------------------------------ radar news
-st.subheader("🔭 Nuovi spunti dal mercato", anchor=False)
-st.caption("Notizie pubbliche in tempo reale (Google News, centinaia di testate) **agganciate ai tuoi ambiti**: "
-           "ogni blocco mostra **tutto ciò che può muovere il valore** (IPO, acquisizioni, fusioni, partnership, "
-           "trimestrali, lanci, approvazioni, commesse, rating, cause…) **dentro i settori in cui hai investito** "
-           "— AI/Cloud, Auto elettriche/Batterie, Mercati emergenti, Sanità, Azionario globale — più le **grandi "
-           "operazioni globali** e una sezione **📌 Altro** con macro e mercati. **Spunti, non consigli finanziari**.")
+        tone_col = {"green": GREEN, "red": RED, "blue": "#6c8cff", "gold": GOLD}
+        cards = ""
+        for icon, tone, title, text in advice:
+            c = tone_col.get(tone, "#6c8cff")
+            cards += (f"<div class='advcard' style='border-left:4px solid {c}'>"
+                      f"<div class='advt'>{icon} {title}</div><div class='advx'>{text}</div></div>")
+        st.markdown(f"<div class='advgrid'>{cards}</div>", unsafe_allow_html=True)
+        st.caption("⚠️ Informazioni a scopo educativo, non consulenza finanziaria. Le decisioni restano tue.")
 
 
-@st.cache_data(ttl=10800, show_spinner=False)  # aggiorna ogni 3 ore
+
+@st.cache_data(ttl=10800, show_spinner=False)
 def _carica_news():
     return news.market_news(per_tema=5)
 
 
-col_a, col_b = st.columns([1, 4])
-with col_a:
-    if st.button("🔄 Aggiorna news"):
-        _carica_news.clear()
+@st.cache_data(ttl=10800, show_spinner=False)
+def _carica_crypto_news():
+    return news.crypto_news(per_tema=5)
 
-try:
-    with st.spinner("Cerco notizie sul mercato…"):
-        temi = _carica_news()
-except Exception:
-    temi = []
 
-if not any(t["notizie"] for t in temi):
-    st.info("Nessuna notizia recuperata al momento. Riprova tra poco con «🔄 Aggiorna news».")
-else:
+def _render_temi(temi):
+    if not any(t["notizie"] for t in temi):
+        st.info("Nessuna notizia recuperata al momento. Riprova tra poco con il tasto Aggiorna news.")
+        return
     for t in temi:
         if not t["notizie"]:
             continue
@@ -673,10 +671,76 @@ else:
                 "</div></div>")
         st.markdown(f"<div class='advgrid'>{cards}</div>", unsafe_allow_html=True)
         st.write("")
+    st.caption("⚠️ Fonti giornalistiche di terze parti, riportate automaticamente. "
+               "Non è consulenza finanziaria: fai sempre le tue verifiche.")
 
-st.caption("⚠️ Fonti giornalistiche di terze parti, riportate automaticamente. "
-           "Non è consulenza finanziaria: fai sempre le tue verifiche.")
+
+STAKING_RATE = 0.0572
+
+
+def render_staking_projection(ds):
+    st.divider()
+    st.subheader("🌱 Proiezione staking", anchor=False)
+    _, tot = compute(ds)
+    now = tot["now"]
+    st.caption(f"Le tue crypto sono in **staking** al **{STAKING_RATE*100:.2f}% annuo**. Proiezione del valore a "
+               f"interesse composto partendo da {eur(now)} (solo rendimento staking, prezzi fermi). "
+               "Stima indicativa, non garanzia: il valore di mercato delle crypto può variare molto.")
+    trows = ""
+    for y in [1, 2, 3, 5]:
+        val = now * ((1 + STAKING_RATE) ** y)
+        gain = val - now
+        lbl = f"{y} anno" if y == 1 else f"{y} anni"
+        trows += (f"<tr><td>{lbl}</td><td>{eur(val)}</td>"
+                  f"<td>{vspan((val/now-1)*100)}</td>"
+                  f"<td style='color:#2ecc71;font-weight:600'>+ {eur(gain)}</td></tr>")
+    st.markdown(
+        "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Orizzonte</th>"
+        "<th>Valore proiettato</th><th>Crescita</th><th>Guadagno staking</th></tr></thead>"
+        f"<tbody>{trows}</tbody></table></div>", unsafe_allow_html=True)
+
+
+def render_stock_news():
+    st.divider()
+    st.subheader("🔭 Nuovi spunti dal mercato", anchor=False)
+    st.caption("Notizie pubbliche in tempo reale (Google News) **agganciate ai tuoi settori azionari** "
+               "(AI/Cloud, Auto elettriche/Batterie, Mercati emergenti, Sanità, Azionario globale) più grandi "
+               "operazioni globali e macro. **Spunti, non consigli finanziari**.")
+    if st.button("🔄 Aggiorna news", key="stk_news_refresh"):
+        _carica_news.clear()
+    try:
+        with st.spinner("Cerco notizie sul mercato…"):
+            temi = _carica_news()
+    except Exception:
+        temi = []
+    _render_temi(temi)
+
+
+def render_crypto_news():
+    st.divider()
+    st.subheader("🔭 Novità dal mondo crypto", anchor=False)
+    st.caption("Notizie pubbliche in tempo reale (Google News) sul mondo **crypto**: nuove crypto e listing, "
+               "Stati e regolatori che approvano o vietano, ETF e mosse istituzionali, e i tuoi asset "
+               "(Solana, Worldcoin). **Spunti, non consigli finanziari**.")
+    if st.button("🔄 Aggiorna news", key="cry_news_refresh"):
+        _carica_crypto_news.clear()
+    try:
+        with st.spinner("Cerco notizie crypto…"):
+            temi = _carica_crypto_news()
+    except Exception:
+        temi = []
+    _render_temi(temi)
+
+
+tab_stk, tab_cry = st.tabs(["📈 Azioni", "🪙 Crypto"])
+with tab_stk:
+    render_dashboard(doc, doc, "stk")
+    render_stock_news()
+with tab_cry:
+    render_dashboard(doc["crypto"], doc, "cry")
+    render_staking_projection(doc["crypto"])
+    render_crypto_news()
 
 st.divider()
-st.caption("🔒 Accesso privato: solo le persone con la password e invitate via email possono vedere e modificare "
-           "questa dashboard. I tuoi dati sono conservati in un archivio privato.")
+st.caption("🔒 Accesso privato: solo le persone con la password e invitate via email possono vedere "
+           "e modificare questa dashboard. I tuoi dati sono conservati in un archivio privato.")

@@ -110,6 +110,38 @@ def _dedup(notizie, limite):
     return uniche[:limite]
 
 
+# Temi cercati su Google News per il mondo CRYPTO.
+TEMI_CRYPTO = [
+    ("Nuove crypto / Listing", "🆕",
+     '"new cryptocurrency" OR "token launch" OR "new listing" OR "nuova criptovaluta" OR '
+     'airdrop OR presale OR "token generation event"'),
+    ("Stati & Regolatori", "🏛️",
+     '"crypto regulation" OR "approves crypto" OR "crypto law" OR "bitcoin legal tender" OR '
+     '"crypto ban" OR "SEC crypto" OR "MiCA" OR "stablecoin law"'),
+    ("ETF & Istituzionali", "🏦",
+     '"crypto ETF" OR "bitcoin ETF" OR "ethereum ETF" OR "spot ETF" OR "institutional crypto" OR '
+     '"crypto treasury"'),
+    ("I tuoi asset", "🎯",
+     'Solana OR Worldcoin OR "SOL price" OR "WLD token"'),
+    ("Mercato crypto", "📈",
+     '"crypto market" OR bitcoin OR ethereum OR altcoin OR "crypto rally"'),
+]
+
+
+def crypto_news(per_tema=5):
+    """News dal mondo crypto, stessa struttura di market_news (parallelo)."""
+    jobs = []
+    for i, (_, _, query) in enumerate(TEMI_CRYPTO):
+        jobs.append((i, lambda q=query: _google(q, "it", "IT")))
+        jobs.append((i, lambda q=query: _google(q, "en", "US")))
+    secchi = {i: [] for i in range(len(TEMI_CRYPTO))}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for i, notizie in ex.map(lambda j: (j[0], j[1]()), jobs):
+            secchi[i] += notizie
+    return [{"etichetta": et, "emoji": em, "notizie": _dedup(secchi[i], per_tema)}
+            for i, (et, em, _) in enumerate(TEMI_CRYPTO)]
+
+
 def market_news(per_tema=5):
     """Restituisce una lista di aree: {etichetta, emoji, notizie:[...]}.
 
