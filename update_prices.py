@@ -144,9 +144,17 @@ def send_email(recap_lines, today):
 def main():
     data, sha = load_data()
     data, info = prices.update_prices_in_data(data, log=log)
+    cinfo = None
+    if isinstance(data.get("crypto"), dict) and data["crypto"].get("holdings"):
+        try:
+            data["crypto"], cinfo = prices.update_prices_in_data(data["crypto"], log=log)
+        except Exception as e:
+            log("Cripto: aggiornamento non riuscito: " + repr(e)[:120])
     save_data(data, sha)
     log(f"Totale: {_eur(info['total'])} (al {itdate(info['today'])})")
     recap = build_recap(data, info)
+    if cinfo:
+        recap.append(f"🪙 Cripto: {_eur(cinfo['total'])}")
     for r in recap:
         log("RECAP • " + r)
     send_email(recap, info["today"])
