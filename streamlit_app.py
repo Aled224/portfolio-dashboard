@@ -352,10 +352,15 @@ CRYPTO_DEFAULT = {
 }
 
 try:
-    doc = load_data()
+    # Il documento vive in memoria per tutta la sessione: cosi' quando aggiungi/rimuovi
+    # qualcosa lo vedi SUBITO (senza aspettare che GitHub propaghi la scrittura, che per
+    # qualche secondo restituisce ancora la versione vecchia). Un F5 ricarica dal cloud.
+    if "doc" not in st.session_state:
+        st.session_state["doc"] = load_data()
 except Exception as e:
     st.error(f"Non riesco a leggere i dati. Controlla i Secrets (github_token, github_repo). Dettaglio: {e}")
     st.stop()
+doc = st.session_state["doc"]
 _cry = doc.get("crypto")
 if not isinstance(_cry, dict) or not _cry.get("holdings"):
     doc["crypto"] = CRYPTO_DEFAULT
@@ -422,7 +427,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 Il mio portafoglio")
+_th = st.columns([6, 1.4])
+_th[0].title("📊 Il mio portafoglio")
+with _th[1]:
+    st.write("")
+    if st.button("🔄 Ricarica dal cloud", use_container_width=True,
+                 help="Riscarica i dati più recenti dal cloud (utile dopo l'aggiornamento del lunedì)"):
+        st.session_state.pop("doc", None)
+        refresh()
+        st.rerun()
 
 _CG_IDS = {"sol": "solana", "wld": "worldcoin-wld"}
 _cg_chg = False
