@@ -269,9 +269,9 @@ def render_add_asset(data, doc, holdings, ns):
     kind = "crypto" if is_crypto else "titolo"
     fonte = "CoinGecko" if is_crypto else "Yahoo Finance"
     with st.expander(f"➕ Aggiungi un nuovo {kind} al piano"):
-        q = st.text_input("1) Scrivi il nome (o il simbolo)", key=f"{ns}_q",
+        q = st.text_input("Scrivi nome", key=f"{ns}_q",
                           placeholder="Bitcoin" if is_crypto else "Apple",
-                          help=f"Man mano che scrivi ti propongo i risultati di {fonte}. "
+                          help=f"Man mano che scrivi ti propongo i risultati reali di {fonte}. "
                                "Scegli sempre dall'elenco: così il nome combacia e il prezzo si trova di sicuro.")
         results = []
         if q and len(q.strip()) >= 2:
@@ -282,7 +282,7 @@ def render_add_asset(data, doc, holdings, ns):
 
         chosen = None
         if results:
-            idx = st.selectbox("2) Scegli dall'elenco (nome + simbolo, dal vivo)",
+            idx = st.selectbox("Scegli dall'elenco reale",
                                options=list(range(len(results))),
                                format_func=lambda i: results[i]["label"], key=f"{ns}_pick")
             chosen = results[idx]
@@ -298,16 +298,15 @@ def render_add_asset(data, doc, holdings, ns):
             m_sym = mc[1].text_input("Simbolo", key=f"{ns}_msym",
                                      help="Es. BTC, ETH" if is_crypto else "Es. AAPL, ENEL.MI, RO.SW")
 
-        # categoria: SOLO azioni, scelta tra quelle esistenti (le crypto non hanno categorie)
+        # categoria (ETF, Sanità, ...): SOLO azioni, tra quelle esistenti. Le crypto NON hanno categorie.
         cat = "Crypto" if is_crypto else ""
         if not is_crypto:
             cats = list(dict.fromkeys([h["cat"] for h in holdings]))
             NUOVA = "➕ Nuova categoria…"
-            cat_pick = st.selectbox("3) Categoria", options=cats + [NUOVA], key=f"{ns}_catsel")
+            cat_pick = st.selectbox("Categoria", options=cats + [NUOVA], key=f"{ns}_catsel")
             cat = st.text_input("Nome nuova categoria", key=f"{ns}_catnew") if cat_pick == NUOVA else cat_pick
 
-        amount = st.number_input(("3" if is_crypto else "4") + ") Importo investito (€)",
-                                 min_value=0.0, step=10.0, value=0.0, key=f"{ns}_amt")
+        amount = st.number_input("Importo (€)", min_value=0.0, step=10.0, value=0.0, key=f"{ns}_amt")
 
         if st.button(f"Aggiungi {kind}", key=f"{ns}_addbtn", type="primary", use_container_width=True):
             if manual:
