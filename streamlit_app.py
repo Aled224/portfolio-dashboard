@@ -271,7 +271,8 @@ def render_add_asset(data, doc, holdings, ns):
     with st.expander(f"➕ Aggiungi un nuovo {kind} al piano"):
         q = st.text_input("1) Scrivi il nome (o il simbolo)", key=f"{ns}_q",
                           placeholder="Bitcoin" if is_crypto else "Apple",
-                          help=f"Ti propongo nome e simbolo giusti da {fonte}.")
+                          help=f"Man mano che scrivi ti propongo i risultati di {fonte}. "
+                               "Scegli sempre dall'elenco: così il nome combacia e il prezzo si trova di sicuro.")
         results = []
         if q and len(q.strip()) >= 2:
             try:
@@ -281,11 +282,13 @@ def render_add_asset(data, doc, holdings, ns):
 
         chosen = None
         if results:
-            idx = st.selectbox("2) Scegli dall'elenco", options=list(range(len(results))),
+            idx = st.selectbox("2) Scegli dall'elenco (nome + simbolo, dal vivo)",
+                               options=list(range(len(results))),
                                format_func=lambda i: results[i]["label"], key=f"{ns}_pick")
             chosen = results[idx]
         elif q and len(q.strip()) >= 2:
-            st.warning(f"Nessun risultato su {fonte}. Spunta «inserisci a mano» qui sotto.")
+            st.warning(f"Nessun risultato su {fonte}. Prova un altro nome, "
+                       "oppure spunta «inserisci a mano».")
 
         manual = st.checkbox("Non lo trovo: inserisco nome e simbolo a mano", key=f"{ns}_manual")
         m_nome = m_sym = ""
@@ -295,12 +298,16 @@ def render_add_asset(data, doc, holdings, ns):
             m_sym = mc[1].text_input("Simbolo", key=f"{ns}_msym",
                                      help="Es. BTC, ETH" if is_crypto else "Es. AAPL, ENEL.MI, RO.SW")
 
-        cats = list(dict.fromkeys([h["cat"] for h in holdings]))
-        cc = st.columns([3, 2])
-        cat = cc[0].text_input("3) Categoria", key=f"{ns}_cat",
-                               placeholder=(cats[0] if cats else "Categoria"))
-        amount = cc[1].number_input("4) Importo investito (€)", min_value=0.0, step=10.0,
-                                    value=0.0, key=f"{ns}_amt")
+        # categoria: SOLO azioni, scelta tra quelle esistenti (le crypto non hanno categorie)
+        cat = "Crypto" if is_crypto else ""
+        if not is_crypto:
+            cats = list(dict.fromkeys([h["cat"] for h in holdings]))
+            NUOVA = "➕ Nuova categoria…"
+            cat_pick = st.selectbox("3) Categoria", options=cats + [NUOVA], key=f"{ns}_catsel")
+            cat = st.text_input("Nome nuova categoria", key=f"{ns}_catnew") if cat_pick == NUOVA else cat_pick
+
+        amount = st.number_input(("3" if is_crypto else "4") + ") Importo investito (€)",
+                                 min_value=0.0, step=10.0, value=0.0, key=f"{ns}_amt")
 
         if st.button(f"Aggiungi {kind}", key=f"{ns}_addbtn", type="primary", use_container_width=True):
             if manual:
@@ -313,6 +320,8 @@ def render_add_asset(data, doc, holdings, ns):
                 source = cg_id = None
             if not nome or not sym:
                 st.warning("Scegli un asset dall'elenco oppure inseriscilo a mano.")
+            elif not is_crypto and not str(cat).strip():
+                st.warning("Scegli una categoria.")
             elif amount <= 0:
                 st.warning("Inserisci l'importo investito (maggiore di zero).")
             else:
