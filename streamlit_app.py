@@ -405,6 +405,20 @@ st.markdown("""
 .advt{font-weight:700;margin-bottom:6px;font-size:14px}
 .advx{color:#c7cbe8;font-size:13px;line-height:1.5}
 @media (max-width:640px){.advgrid{grid-template-columns:1fr}}
+/* ------- MOBILE: colonne che si impilano, margini piu' stretti, testo leggibile ------- */
+@media (max-width:640px){
+  .block-container{padding:1rem 0.6rem 3rem !important}
+  /* le colonne Streamlit vanno a capo invece di stringersi */
+  [data-testid="stHorizontalBlock"]{flex-wrap:wrap !important;gap:10px !important}
+  [data-testid="stHorizontalBlock"] > div{flex:1 1 130px !important;min-width:130px !important}
+  /* cards metriche piu' compatte */
+  [data-testid="stMetricValue"]{font-size:20px !important}
+  [data-testid="stMetricLabel"]{font-size:12px !important}
+  /* selettore periodo (radio) che va a capo senza tagliarsi */
+  [role="radiogroup"]{flex-wrap:wrap !important}
+  /* niente scroll orizzontale della pagina */
+  .main .block-container{overflow-x:hidden}
+}
 </style>
 """, unsafe_allow_html=True)
 
