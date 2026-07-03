@@ -6,7 +6,7 @@ name: Tieni sveglia l'app
 
 on:
   schedule:
-    - cron: '0 */4 * * *'   # ogni 4 ore
+    - cron: '*/5 * * * *'   # ogni 5 minuti: cosi' l'app non resta mai ferma abbastanza da addormentarsi
   workflow_dispatch:          # avvio manuale dal sito di GitHub
 
 jobs:

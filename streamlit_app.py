@@ -151,6 +151,141 @@ def asset_hist_cached(sym, ccy, cg_id, source, rng):
 def momentum_cached(sym):
     return prices.momentum(sym)
 
+
+# --------------------------------------------- aggiunta nuovo titolo / versamenti
+def _fetch_now_eur(sym, source=None, cg_id=None):
+    """Prezzo unitario ATTUALE in EUR + valuta rilevata. Serve anche a validare il simbolo."""
+    if source == "coingecko" and cg_id:
+        now, _ = prices.coingecko_chart(cg_id, days="1")
+        if not now:
+            raise ValueError("nessun prezzo")
+        return float(now), "EUR"
+    cur, now, _ = prices.yahoo(sym, rng="5d")
+    if not now:
+        raise ValueError("nessun prezzo")
+    cur = cur or "EUR"
+    if cur != "EUR":
+        fx, _ = prices.fx_to_eur(cur, rng="5d")
+        return float(now) * float(fx or 1.0), cur
+    return float(now), cur
+
+
+def _slug(text, existing):
+    base = "".join(ch for ch in text.lower() if ch.isalnum())[:12] or "asset"
+    hid, i = base, 2
+    while hid in existing:
+        hid = f"{base}{i}"
+        i += 1
+    return hid
+
+
+def add_holding(data, nome, sym, cat, amount, is_crypto):
+    """Aggiunge un nuovo titolo/crypto al piano. Baseline = prezzo di oggi, cosi'
+    la posizione parte in pari e cresce dal momento in cui la inserisci."""
+    sym = sym.strip().upper()
+    if is_crypto and "-" not in sym:
+        sym = sym + "-EUR"
+    now_eur, ccy = _fetch_now_eur(sym)          # valida il simbolo e prende il prezzo
+    existing = {h["id"] for h in data.get("holdings", [])}
+    hid = _slug(nome, existing)
+    h = {"id": hid, "nome": nome.strip(), "sym": sym, "ccy": ccy,
+         "iniziale": round(float(amount), 2), "cat": (cat.strip() or "Altro")}
+    data.setdefault("holdings", []).append(h)
+    data.setdefault("baseline_prices", {})[hid] = now_eur
+    data.setdefault("current", {})[hid] = round(float(amount), 2)
+    return h
+
+
+def render_pac(data, doc, holdings, ns):
+    """Registra un versamento (piano d'accumulo) + elenco dei versamenti. Usato da entrambe le tab."""
+    st.subheader("➕ Registra un versamento (piano d'accumulo)")
+    with st.form(f"{ns}_add_pac", clear_on_submit=True):
+        fc = st.columns([3, 2, 2])
+        sel = fc[0].selectbox("Titolo", options=[h["id"] for h in holdings],
+                              format_func=lambda i: by_id(holdings, i)["nome"], key=f"{ns}_pac_sel")
+        amount = fc[1].number_input("Importo (€)", min_value=0.0, step=10.0, value=0.0, key=f"{ns}_pac_amt")
+        fc[2].write("")
+        fc[2].write("")
+        if fc[2].form_submit_button("Conferma versamento", use_container_width=True):
+            if amount and amount > 0:
+                h = by_id(holdings, sel)
+                cur = float(data.get("current", {}).get(sel, h["iniziale"]))
+                idx = (cur / h["iniziale"]) if h["iniziale"] else 1.0
+                today = datetime.date.today().isoformat()
+                ts = int(datetime.datetime.now().timestamp() * 1000)
+                data.setdefault("pac", {})
+                lst = data["pac"].get(sel)
+                if not isinstance(lst, list):
+                    lst = []
+                lst.append({"a": float(amount), "d": today, "idx": idx, "ts": ts})
+                data["pac"][sel] = lst
+                try:
+                    save_data(doc)
+                    st.success(f"Aggiunto + {eur(amount)} su {h['nome']}.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Errore nel salvataggio: {e}")
+            else:
+                st.warning("Inserisci un importo maggiore di zero.")
+
+    tranches_all = []
+    for h in holdings:
+        for i, t in enumerate(data.get("pac", {}).get(h["id"], []) or []):
+            tranches_all.append((h, i, t))
+    if tranches_all:
+        with st.expander(f"📋 Versamenti registrati ({len(tranches_all)})"):
+            for h, i, t in sorted(tranches_all, key=lambda x: x[2].get("ts", 0), reverse=True):
+                lc = st.columns([6, 1])
+                lc[0].write(f"📅 {itdate(t.get('d'))} · **{h['nome']}** · + {eur(t.get('a', 0))}")
+                if lc[1].button("Rimuovi", key=f"{ns}_rm_{h['id']}_{i}", use_container_width=True):
+                    lst = data["pac"].get(h["id"], [])
+                    if 0 <= i < len(lst):
+                        lst.pop(i)
+                        if lst:
+                            data["pac"][h["id"]] = lst
+                        else:
+                            data["pac"].pop(h["id"], None)
+                        try:
+                            save_data(doc)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Errore: {e}")
+    st.divider()
+
+
+def render_add_asset(data, doc, holdings, ns):
+    """Form per aggiungere un nuovo titolo/crypto al piano. Usato da entrambe le tab."""
+    kind = "crypto" if ns == "cry" else "titolo"
+    with st.expander(f"➕ Aggiungi un nuovo {kind} al piano"):
+        with st.form(f"{ns}_add_asset", clear_on_submit=True):
+            ac = st.columns([3, 2, 2, 2])
+            new_nome = ac[0].text_input("Nome", key=f"{ns}_na_nome",
+                                        placeholder="Bitcoin" if ns == "cry" else "Apple")
+            new_sym = ac[1].text_input("Simbolo", key=f"{ns}_na_sym",
+                                       placeholder="BTC" if ns == "cry" else "AAPL")
+            cats = list(dict.fromkeys([h["cat"] for h in holdings]))
+            new_cat = ac[2].text_input("Categoria", key=f"{ns}_na_cat",
+                                       placeholder=(cats[0] if cats else "Categoria"))
+            new_amt = ac[3].number_input("Importo (€)", min_value=0.0, step=10.0, value=0.0, key=f"{ns}_na_amt")
+            st.caption("Simbolo crypto (es. BTC, ETH, ADA): uso il prezzo in euro di Yahoo Finance."
+                       if ns == "cry" else
+                       "Simbolo Yahoo Finance (es. AAPL, ENEL.MI, RO.SW). Lo trovi su finance.yahoo.com.")
+            if st.form_submit_button(f"Aggiungi {kind}", use_container_width=True, type="primary"):
+                if not new_nome.strip() or not new_sym.strip():
+                    st.warning("Servono almeno Nome e Simbolo.")
+                elif new_amt <= 0:
+                    st.warning("Inserisci l'importo investito (maggiore di zero).")
+                else:
+                    try:
+                        h = add_holding(data, new_nome, new_sym, new_cat, new_amt, ns == "cry")
+                        save_data(doc)
+                        st.success(f"Aggiunto {h['nome']} ({h['sym']}) al piano.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Non trovo un prezzo per «{new_sym.strip().upper()}». "
+                                 f"Controlla il simbolo. Dettaglio: {repr(e)[:80]}")
+
+
 # --------------------------------------------------------------- dati cripto
 CRYPTO_DEFAULT = {
     "base_date": "2026-06-26",
@@ -308,63 +443,12 @@ def render_dashboard(ds, doc, ns):
         f"<th>Variazione<br>{sub}al {itdate(last_update)}</span></th></tr></thead>"
         f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
 
+    render_add_asset(data, doc, holdings, ns)
+    st.divider()
+
+    render_pac(data, doc, holdings, ns)
+
     if ns != "cry":
-        # ------------------------------------------------------------------ aggiungi PAC
-        st.subheader("➕ Registra un versamento (piano d'accumulo)")
-        with st.form(f"{ns}_add_pac", clear_on_submit=True):
-            fc = st.columns([3, 2, 2])
-            sel = fc[0].selectbox("Titolo", options=[h["id"] for h in holdings],
-                                  format_func=lambda i: by_id(holdings, i)["nome"], key=f"{ns}_pac_sel")
-            amount = fc[1].number_input("Importo (€)", min_value=0.0, step=10.0, value=0.0, key=f"{ns}_pac_amt")
-            fc[2].write("")
-            fc[2].write("")
-            if fc[2].form_submit_button("Conferma versamento", use_container_width=True):
-                if amount and amount > 0:
-                    h = by_id(holdings, sel)
-                    cur = float(data.get("current", {}).get(sel, h["iniziale"]))
-                    idx = (cur / h["iniziale"]) if h["iniziale"] else 1.0
-                    today = datetime.date.today().isoformat()
-                    ts = int(datetime.datetime.now().timestamp() * 1000)
-                    data.setdefault("pac", {})
-                    lst = data["pac"].get(sel)
-                    if not isinstance(lst, list):
-                        lst = []
-                    lst.append({"a": float(amount), "d": today, "idx": idx, "ts": ts})
-                    data["pac"][sel] = lst
-                    try:
-                        save_data(doc)
-                        st.success(f"Aggiunto + {eur(amount)} su {h['nome']}.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Errore nel salvataggio: {e}")
-                else:
-                    st.warning("Inserisci un importo maggiore di zero.")
-
-        tranches_all = []
-        for h in holdings:
-            for i, t in enumerate(data.get("pac", {}).get(h["id"], []) or []):
-                tranches_all.append((h, i, t))
-        if tranches_all:
-            with st.expander(f"📋 Versamenti registrati ({len(tranches_all)})"):
-                for h, i, t in sorted(tranches_all, key=lambda x: x[2].get("ts", 0), reverse=True):
-                    lc = st.columns([6, 1])
-                    lc[0].write(f"📅 {itdate(t.get('d'))} · **{h['nome']}** · + {eur(t.get('a', 0))}")
-                    if lc[1].button("Rimuovi", key=f"{ns}_rm_{h['id']}_{i}", use_container_width=True):
-                        lst = data["pac"].get(h["id"], [])
-                        if 0 <= i < len(lst):
-                            lst.pop(i)
-                            if lst:
-                                data["pac"][h["id"]] = lst
-                            else:
-                                data["pac"].pop(h["id"], None)
-                            try:
-                                save_data(doc)
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Errore: {e}")
-
-        st.divider()
-
         # ------------------------------------------------------------------ categorie
         st.subheader("🎯 Peso e Target per categoria")
         cat_now = {}
