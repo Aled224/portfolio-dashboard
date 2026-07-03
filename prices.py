@@ -7,7 +7,45 @@ titoli arriva sempre da `data["holdings"]`.
 """
 import datetime
 import json
+import urllib.parse
 import urllib.request
+
+
+def search_yahoo(q):
+    """Cerca azioni/ETF su Yahoo Finance. Ritorna una lista di suggerimenti
+    {nome, sym, source, cg_id, label} da mostrare in un menu a tendina."""
+    url = ("https://query1.finance.yahoo.com/v1/finance/search?q="
+           + urllib.parse.quote(q) + "&quotesCount=12&newsCount=0")
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    d = json.loads(urllib.request.urlopen(req, timeout=20).read())
+    out = []
+    for qo in d.get("quotes", []):
+        sym = qo.get("symbol")
+        if not sym or qo.get("quoteType") not in ("EQUITY", "ETF", "MUTUALFUND", "INDEX"):
+            continue
+        name = qo.get("shortname") or qo.get("longname") or sym
+        exch = qo.get("exchDisp") or qo.get("exchange") or ""
+        out.append({"nome": name, "sym": sym, "source": None, "cg_id": None,
+                    "label": f"{name} · {sym}" + (f" · {exch}" if exch else "")})
+    return out
+
+
+def search_coingecko(q):
+    """Cerca crypto su CoinGecko. Ritorna suggerimenti {nome, sym, source, cg_id, label}."""
+    url = "https://api.coingecko.com/api/v3/search?query=" + urllib.parse.quote(q)
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    d = json.loads(urllib.request.urlopen(req, timeout=20).read())
+    out = []
+    for c in d.get("coins", [])[:15]:
+        cid = c.get("id")
+        if not cid:
+            continue
+        sym = (c.get("symbol") or "").upper()
+        name = c.get("name") or cid
+        rank = c.get("market_cap_rank")
+        out.append({"nome": name, "sym": f"{sym}-EUR", "source": "coingecko", "cg_id": cid,
+                    "label": f"{name} · {sym}" + (f" · #{rank}" if rank else "")})
+    return out
 
 
 def yahoo(sym, rng="3mo"):

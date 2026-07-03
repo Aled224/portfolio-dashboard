@@ -179,21 +179,30 @@ def _slug(text, existing):
     return hid
 
 
-def add_holding(data, nome, sym, cat, amount, is_crypto):
+def add_holding(data, nome, sym, cat, amount, is_crypto, source=None, cg_id=None):
     """Aggiunge un nuovo titolo/crypto al piano. Baseline = prezzo di oggi, cosi'
     la posizione parte in pari e cresce dal momento in cui la inserisci."""
     sym = sym.strip().upper()
-    if is_crypto and "-" not in sym:
+    if is_crypto and source != "coingecko" and "-" not in sym:
         sym = sym + "-EUR"
-    now_eur, ccy = _fetch_now_eur(sym)          # valida il simbolo e prende il prezzo
+    now_eur, ccy = _fetch_now_eur(sym, source=source, cg_id=cg_id)   # valida e prende il prezzo
     existing = {h["id"] for h in data.get("holdings", [])}
     hid = _slug(nome, existing)
     h = {"id": hid, "nome": nome.strip(), "sym": sym, "ccy": ccy,
          "iniziale": round(float(amount), 2), "cat": (cat.strip() or "Altro")}
+    if source == "coingecko" and cg_id:
+        h["cg_id"] = cg_id
+        h["source"] = "coingecko"
+        h["ccy"] = "EUR"
     data.setdefault("holdings", []).append(h)
     data.setdefault("baseline_prices", {})[hid] = now_eur
     data.setdefault("current", {})[hid] = round(float(amount), 2)
     return h
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def search_assets_cached(q, is_crypto):
+    return prices.search_coingecko(q) if is_crypto else prices.search_yahoo(q)
 
 
 def render_pac(data, doc, holdings, ns):
@@ -254,36 +263,68 @@ def render_pac(data, doc, holdings, ns):
 
 
 def render_add_asset(data, doc, holdings, ns):
-    """Form per aggiungere un nuovo titolo/crypto al piano. Usato da entrambe le tab."""
-    kind = "crypto" if ns == "cry" else "titolo"
+    """Aggiungi un nuovo titolo/crypto: scrivi il nome, scegli dal menu (nome + simbolo
+    compilati in automatico da Yahoo/CoinGecko), oppure inseriscilo a mano. Usato da entrambe le tab."""
+    is_crypto = (ns == "cry")
+    kind = "crypto" if is_crypto else "titolo"
+    fonte = "CoinGecko" if is_crypto else "Yahoo Finance"
     with st.expander(f"➕ Aggiungi un nuovo {kind} al piano"):
-        with st.form(f"{ns}_add_asset", clear_on_submit=True):
-            ac = st.columns([3, 2, 2, 2])
-            new_nome = ac[0].text_input("Nome", key=f"{ns}_na_nome",
-                                        placeholder="Bitcoin" if ns == "cry" else "Apple")
-            new_sym = ac[1].text_input("Simbolo", key=f"{ns}_na_sym",
-                                       placeholder="BTC" if ns == "cry" else "AAPL")
-            cats = list(dict.fromkeys([h["cat"] for h in holdings]))
-            new_cat = ac[2].text_input("Categoria", key=f"{ns}_na_cat",
-                                       placeholder=(cats[0] if cats else "Categoria"))
-            new_amt = ac[3].number_input("Importo (€)", min_value=0.0, step=10.0, value=0.0, key=f"{ns}_na_amt")
-            st.caption("Simbolo crypto (es. BTC, ETH, ADA): uso il prezzo in euro di Yahoo Finance."
-                       if ns == "cry" else
-                       "Simbolo Yahoo Finance (es. AAPL, ENEL.MI, RO.SW). Lo trovi su finance.yahoo.com.")
-            if st.form_submit_button(f"Aggiungi {kind}", use_container_width=True, type="primary"):
-                if not new_nome.strip() or not new_sym.strip():
-                    st.warning("Servono almeno Nome e Simbolo.")
-                elif new_amt <= 0:
-                    st.warning("Inserisci l'importo investito (maggiore di zero).")
-                else:
-                    try:
-                        h = add_holding(data, new_nome, new_sym, new_cat, new_amt, ns == "cry")
-                        save_data(doc)
-                        st.success(f"Aggiunto {h['nome']} ({h['sym']}) al piano.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Non trovo un prezzo per «{new_sym.strip().upper()}». "
-                                 f"Controlla il simbolo. Dettaglio: {repr(e)[:80]}")
+        q = st.text_input("1) Scrivi il nome (o il simbolo)", key=f"{ns}_q",
+                          placeholder="Bitcoin" if is_crypto else "Apple",
+                          help=f"Ti propongo nome e simbolo giusti da {fonte}.")
+        results = []
+        if q and len(q.strip()) >= 2:
+            try:
+                results = search_assets_cached(q.strip(), is_crypto)
+            except Exception:
+                results = []
+
+        chosen = None
+        if results:
+            idx = st.selectbox("2) Scegli dall'elenco", options=list(range(len(results))),
+                               format_func=lambda i: results[i]["label"], key=f"{ns}_pick")
+            chosen = results[idx]
+        elif q and len(q.strip()) >= 2:
+            st.warning(f"Nessun risultato su {fonte}. Spunta «inserisci a mano» qui sotto.")
+
+        manual = st.checkbox("Non lo trovo: inserisco nome e simbolo a mano", key=f"{ns}_manual")
+        m_nome = m_sym = ""
+        if manual:
+            mc = st.columns(2)
+            m_nome = mc[0].text_input("Nome", key=f"{ns}_mnome")
+            m_sym = mc[1].text_input("Simbolo", key=f"{ns}_msym",
+                                     help="Es. BTC, ETH" if is_crypto else "Es. AAPL, ENEL.MI, RO.SW")
+
+        cats = list(dict.fromkeys([h["cat"] for h in holdings]))
+        cc = st.columns([3, 2])
+        cat = cc[0].text_input("3) Categoria", key=f"{ns}_cat",
+                               placeholder=(cats[0] if cats else "Categoria"))
+        amount = cc[1].number_input("4) Importo investito (€)", min_value=0.0, step=10.0,
+                                    value=0.0, key=f"{ns}_amt")
+
+        if st.button(f"Aggiungi {kind}", key=f"{ns}_addbtn", type="primary", use_container_width=True):
+            if manual:
+                nome, sym, source, cg_id = m_nome.strip(), m_sym.strip(), None, None
+            elif chosen:
+                nome, sym = chosen["nome"], chosen["sym"]
+                source, cg_id = chosen.get("source"), chosen.get("cg_id")
+            else:
+                nome = sym = ""
+                source = cg_id = None
+            if not nome or not sym:
+                st.warning("Scegli un asset dall'elenco oppure inseriscilo a mano.")
+            elif amount <= 0:
+                st.warning("Inserisci l'importo investito (maggiore di zero).")
+            else:
+                try:
+                    h = add_holding(data, nome, sym, cat, amount, is_crypto, source=source, cg_id=cg_id)
+                    save_data(doc)
+                    st.success(f"Aggiunto {h['nome']} ({h['sym']}) al piano. "
+                               "Comparirà anche nella tabella, nei pesi e nei grafici di andamento.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Non riesco a recuperare il prezzo di «{sym.upper()}». "
+                             f"Controlla il simbolo. Dettaglio: {repr(e)[:80]}")
 
 
 # --------------------------------------------------------------- dati cripto
