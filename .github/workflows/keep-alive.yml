@@ -1,27 +1,37 @@
 name: Tieni sveglia l'app
 
-# Visita l'app a intervalli regolari cosi' Streamlit Cloud non la mette
-# "in pausa" (la schermata "your app is in the oven"). Nessun dato sensibile:
-# fa solo una visita all'indirizzo pubblico dell'app.
+# Streamlit mette in pausa le app che non ricevono visite per giorni. Qui apriamo
+# davvero la pagina con un browser, cosi' la visita conta come traffico vero: un
+# curl secco non basta, viene respinto o non apre nessuna sessione.
+# Se l'app non risponde il job diventa rosso e GitHub manda una mail di avviso:
+# e' anche la sentinella che segnala quando l'app si rompe.
+#
+# NOTA: funziona solo se l'app e' pubblica (protetta dalla password interna).
+# Se torna "privata" con login Google, nessun robot puo' entrare e il ping fallisce.
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # ogni 5 minuti: cosi' l'app non resta mai ferma abbastanza da addormentarsi
+    - cron: '23 */6 * * *'   # ogni 6 ore (l'app va in pausa dopo giorni, non ore)
   workflow_dispatch:          # avvio manuale dal sito di GitHub
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Visita l'app per tenerla sveglia
+      - name: Scarica il programma
+        uses: actions/checkout@v4
+
+      - name: Prepara Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Installa il browser
         run: |
-          URL="${{ secrets.APP_URL }}"
-          if [ -z "$URL" ]; then URL="https://portfolio-dashboard-ciao.streamlit.app/"; fi
-          echo "Ping a: $URL"
-          for path in "" "_stcore/health"; do
-            full="${URL%/}/$path"
-            code=$(curl -s -L -o /dev/null -w "%{http_code}" \
-                   -A "Mozilla/5.0 KeepAlive" --max-time 60 "$full" || echo "000")
-            echo "  $full -> $code"
-          done
-          echo "Fatto."
+          pip install playwright==1.49.1
+          playwright install --with-deps chromium
+
+      - name: Apri l'app (e risvegliala se dorme)
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+        run: python keep_alive.py

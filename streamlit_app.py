@@ -6,6 +6,7 @@ vivono in un repository GitHub PRIVATO e sono letti tramite una chiave segreta.
 In questo file NON c'e' nessun dato personale: solo il programma generico.
 """
 import datetime
+import hmac
 import os
 
 import altair as alt
@@ -69,15 +70,26 @@ def next_monday(iso):
 def _password():
     try:
         if "app_password" in st.secrets:
-            return st.secrets["app_password"]
+            return str(st.secrets["app_password"])
     except Exception:
         pass
     return os.environ.get("APP_PASSWORD", "")
 
 
 def check_password():
+    # Questa password e' l'UNICA difesa dei dati: l'app e' raggiungibile da chiunque
+    # abbia l'indirizzo. Se il segreto manca, l'app si chiude a tutti invece di
+    # lasciar passare chi non digita nulla.
+    attesa = _password()
+    if not attesa:
+        st.title("📊 Portafoglio")
+        st.error("Configurazione incompleta: manca il segreto `app_password`. "
+                 "L'app resta chiusa finche' non viene impostato nei Secrets di Streamlit.")
+        st.stop()
+
     def _entered():
-        st.session_state["authed"] = (st.session_state.get("pwd_input", "") == str(_password()))
+        digitata = st.session_state.get("pwd_input", "")
+        st.session_state["authed"] = bool(digitata) and hmac.compare_digest(digitata, attesa)
         st.session_state["bad_pwd"] = not st.session_state["authed"]
         st.session_state.pop("pwd_input", None)
 
@@ -1053,5 +1065,5 @@ with tab_all:
     render_overview(doc)
 
 st.divider()
-st.caption("🔒 Accesso privato: solo le persone con la password e invitate via email possono vedere "
-           "e modificare questa dashboard. I tuoi dati sono conservati in un archivio privato.")
+st.caption("🔒 Accesso protetto da password: solo chi conosce la password puo' vedere e modificare "
+           "questa dashboard. I tuoi dati sono conservati in un archivio privato.")
