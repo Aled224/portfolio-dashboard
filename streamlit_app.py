@@ -77,9 +77,8 @@ def _password():
 
 
 def check_password():
-    # Questa password e' l'UNICA difesa dei dati: l'app e' raggiungibile da chiunque
-    # abbia l'indirizzo. Se il segreto manca, l'app si chiude a tutti invece di
-    # lasciar passare chi non digita nulla.
+    # Secondo lucchetto, dopo il login Google di Streamlit. Se il segreto manca,
+    # l'app si chiude a tutti invece di lasciar passare chi non digita nulla.
     attesa = _password()
     if not attesa:
         st.title("📊 Portafoglio")
@@ -1065,5 +1064,5 @@ with tab_all:
     render_overview(doc)
 
 st.divider()
-st.caption("🔒 Accesso protetto da password: solo chi conosce la password puo' vedere e modificare "
-           "questa dashboard. I tuoi dati sono conservati in un archivio privato.")
+st.caption("🔒 Accesso privato: solo le persone invitate via email e in possesso della password possono "
+           "vedere e modificare questa dashboard. I tuoi dati sono conservati in un archivio privato.")
