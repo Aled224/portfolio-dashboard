@@ -1,3 +1,10 @@
-streamlit>=1.30
-requests>=2.31
-pandas>=2.0
+# Versioni bloccate di proposito.
+# Senza il blocco, Streamlit Cloud reinstalla le ultime versioni a ogni riavvio:
+# il 13/07/2026 ha preso pyarrow 25 + numpy 2.5.1 su Python 3.14 e il processo
+# e' morto con "Segmentation fault" prima di eseguire una riga di codice.
+# Questo e' il set con cui l'app girava. Cambiare una versione alla volta.
+streamlit==1.58.0
+pandas==3.0.3
+numpy==2.5.0
+pyarrow==24.0.0
+requests==2.34.2
