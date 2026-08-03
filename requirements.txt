@@ -8,3 +8,7 @@ pandas==3.0.3
 numpy==2.5.0
 pyarrow==24.0.0
 requests==2.34.2
+# streamlit_app.py fa "import altair": va dichiarato qui, non lasciato
+# alle dipendenze di streamlit. Intervallo (non versione fissa) per non
+# entrare in conflitto con quella che streamlit si porta dietro.
+altair>=5,<7
