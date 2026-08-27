@@ -12,6 +12,7 @@ import os
 import altair as alt
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from github_store import load_data, save_data, refresh
 import prices
@@ -579,13 +580,11 @@ st.markdown("""
 .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700}
 .autobar{display:inline-block;background:#1c2046;border:1px solid #2b3168;border-radius:999px;padding:6px 14px;font-size:12.5px;color:#9aa0d0;margin:2px 0 6px}
 .tblwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%}
-.pgnav{color:#9aa0d0;font-size:12.5px;padding-top:9px;white-space:nowrap}
 .catbar{display:grid;grid-template-columns:150px 1fr 120px;gap:12px;align-items:center;margin:9px 0}
 @media (max-width:640px){
   .ptbl{font-size:12px}
   .ptbl th,.ptbl td{padding:6px 5px;white-space:nowrap}
   .autobar{font-size:11px;padding:5px 10px;white-space:normal}
-  .pgnav{font-size:11px;padding-top:4px;white-space:normal}
   .catbar{grid-template-columns:78px 1fr 58px;gap:6px;font-size:11px}
   .catbar>div:first-child{font-size:11px;line-height:1.1}
   .pill{font-size:10px;padding:1px 7px}
@@ -636,28 +635,66 @@ if _cg_chg:
         pass
 
 
-def render_paged_table(head_html, rows, key, page_size=5, nota="dalla più recente"):
-    """Tabella con poche righe visibili e due frecce per scorrere. Lo storico si allunga
-    a ogni lunedì: senza paginazione si mangerebbe tutta la pagina, soprattutto su telefono."""
-    n = len(rows)
-    if n == 0:
+SCROLL_TBL = """
+<style>
+ *{box-sizing:border-box}
+ body{margin:0;background:transparent;color:#eef0ff;
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+ .wrap{display:flex;gap:8px;align-items:stretch}
+ .box{flex:1;min-width:0;height:__H__px;overflow-y:auto;overflow-x:auto;
+      -webkit-overflow-scrolling:touch;border-radius:10px}
+ .box::-webkit-scrollbar{width:6px;height:6px}
+ .box::-webkit-scrollbar-thumb{background:#2b3168;border-radius:999px}
+ .box::-webkit-scrollbar-track{background:transparent}
+ table{width:100%;border-collapse:collapse;font-size:14px}
+ th{color:#9aa0d0;text-align:right;padding:0 8px;height:32px;font-size:11px;text-transform:uppercase;
+    letter-spacing:.4px;border-bottom:1px solid #2b3168;position:sticky;top:0;background:#0f1226;z-index:2}
+ td{text-align:right;padding:0 8px;height:36px;border-bottom:1px solid #2b3168;white-space:nowrap}
+ th:first-child,td:first-child{text-align:left}
+ .nav{display:flex;flex-direction:column;justify-content:center;gap:6px;flex:0 0 auto}
+ .nav button{width:34px;height:38px;border-radius:10px;background:#1c2046;border:1px solid #2b3168;
+             color:#9aa0d0;font-size:12px;line-height:1;cursor:pointer;transition:.15s}
+ .nav button:hover:not(:disabled){color:#eef0ff;border-color:#6c8cff}
+ .nav button:disabled{opacity:.3;cursor:default}
+ @media (max-width:640px){table{font-size:12px} th,td{padding:0 5px}
+   .nav button{width:30px;height:34px}}
+</style>
+<div class="wrap">
+  <div class="box" id="box"><table>__HEAD____BODY__</table></div>
+  __NAV__
+</div>
+<script>
+ var box = document.getElementById('box'),
+     up = document.getElementById('up'), dn = document.getElementById('dn');
+ if (up) {
+   var STEP = 36 * 3;   // tre righe per clic: si vede sempre qualcosa di gia' letto
+   function upd() {
+     up.disabled = box.scrollTop <= 1;
+     dn.disabled = box.scrollTop >= box.scrollHeight - box.clientHeight - 1;
+   }
+   up.onclick = function () { box.scrollBy({top: -STEP, behavior: 'smooth'}); };
+   dn.onclick = function () { box.scrollBy({top: STEP, behavior: 'smooth'}); };
+   box.addEventListener('scroll', upd);
+   upd();
+ }
+</script>
+"""
+
+
+def render_scroll_table(head_html, rows, visible=5):
+    """Tabella alta poche righe con due frecce a destra per scorrere (e scroll normale
+    col dito o la rotella). Lo storico si allunga a ogni lunedi': senza questo si
+    mangerebbe tutta la pagina. Vive in un iframe, quindi scorre senza ricaricare nulla."""
+    if not rows:
         return
-    pages = max(1, -(-n // page_size))
-    st.session_state.setdefault(key, 0)
-    page = min(max(0, int(st.session_state.get(key, 0))), pages - 1)
-    st.session_state[key] = page
-    a, b = page * page_size, min(n, (page + 1) * page_size)
-    st.markdown("<div class='tblwrap'><table class='ptbl'>" + head_html
-                + f"<tbody>{''.join(rows[a:b])}</tbody></table></div>", unsafe_allow_html=True)
-    if pages > 1:
-        nav = st.columns([1, 1, 2])
-        if nav[0].button("▲ Più recenti", key=f"{key}_up", use_container_width=True, disabled=(page == 0)):
-            st.session_state[key] = page - 1
-            st.rerun()
-        if nav[1].button("▼ Più vecchie", key=f"{key}_dn", use_container_width=True, disabled=(page >= pages - 1)):
-            st.session_state[key] = page + 1
-            st.rerun()
-        nav[2].markdown(f"<div class='pgnav'>Righe {a + 1}-{b} di {n} · {nota}</div>", unsafe_allow_html=True)
+    n_vis = min(visible, len(rows))
+    h = 32 + n_vis * 36 + 2
+    nav = ("" if len(rows) <= visible else
+           '<div class="nav"><button id="up" title="Su">&#9650;</button>'
+           '<button id="dn" title="Giù">&#9660;</button></div>')
+    html = (SCROLL_TBL.replace("__H__", str(h)).replace("__HEAD__", head_html)
+            .replace("__BODY__", "<tbody>" + "".join(rows) + "</tbody>").replace("__NAV__", nav))
+    components.html(html, height=h + 4, scrolling=False)
 
 
 def render_dashboard(ds, doc, ns):
@@ -810,9 +847,9 @@ def render_dashboard(ds, doc, ns):
         for h in reversed(hist):
             d = (h["total"] - base_tot) / base_tot * 100 if base_tot else 0
             trows.append(f"<tr><td>{itdate(h['date'])}</td><td>{eur(h['total'])}</td><td>{vspan(d)}</td></tr>")
-        render_paged_table(
+        render_scroll_table(
             "<thead><tr><th>Data</th><th>Valore totale</th><th>Var. dall'inizio</th></tr></thead>",
-            trows, key=f"{ns}_histpage", page_size=5)
+            trows, visible=5)
     else:
         st.caption("Il grafico crescerà a ogni aggiornamento dei prezzi.")
 
