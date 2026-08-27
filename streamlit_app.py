@@ -228,17 +228,7 @@ def render_pac(data, doc, holdings, ns):
         fc[2].write("")
         if fc[2].form_submit_button("Conferma versamento", use_container_width=True):
             if amount and amount > 0:
-                h = by_id(holdings, sel)
-                cur = float(data.get("current", {}).get(sel, h["iniziale"]))
-                idx = (cur / h["iniziale"]) if h["iniziale"] else 1.0
-                today = datetime.date.today().isoformat()
-                ts = int(datetime.datetime.now().timestamp() * 1000)
-                data.setdefault("pac", {})
-                lst = data["pac"].get(sel)
-                if not isinstance(lst, list):
-                    lst = []
-                lst.append({"a": float(amount), "d": today, "idx": idx, "ts": ts})
-                data["pac"][sel] = lst
+                h = add_tranche(data, sel, amount)
                 try:
                     save_data(doc)
                     st.success(f"Aggiunto + {eur(amount)} su {h['nome']}.")
@@ -400,19 +390,75 @@ def remove_holding(data, hid):
             tgt.pop(cat, None)
 
 
+def _value_of(data, hid, h):
+    """Quanto vale oggi la posizione: quota iniziale + versamenti cresciuti."""
+    valnow = float(data.get("current", {}).get(hid, h["iniziale"]))
+    idxnow = (valnow / h["iniziale"]) if h["iniziale"] else 1.0
+    _, tranches = _invested_of(data, hid, h)
+    return valnow + sum(float(t.get("a", 0)) * idxnow / (t.get("idx", 1) or 1) for t in tranches)
+
+
+def _all_positions(doc):
+    """Tutte le posizioni del piano, azioni e crypto insieme: cosi' si puo' spostare
+    un importo anche da un'azione a una crypto (e viceversa)."""
+    out = []
+    for emoji, ds in (("📈", doc), ("🪙", doc.get("crypto") or {})):
+        for h in ds.get("holdings", []) or []:
+            out.append({"ds": ds, "h": h, "label": f"{emoji} {h['nome']}"})
+    return out
+
+
+def add_tranche(ds, hid, amount):
+    """Registra un versamento su una posizione, alla quotazione di oggi."""
+    h = by_id(ds.get("holdings", []), hid)
+    cur = float(ds.get("current", {}).get(hid, h["iniziale"]))
+    idx = (cur / h["iniziale"]) if h["iniziale"] else 1.0
+    lst = ds.setdefault("pac", {}).get(hid)
+    if not isinstance(lst, list):
+        lst = []
+    lst.append({"a": float(amount), "d": datetime.date.today().isoformat(), "idx": idx,
+                "ts": int(datetime.datetime.now().timestamp() * 1000)})
+    ds["pac"][hid] = lst
+    return h
+
+
+def _dest_picker(doc, escludi_id, ns, suffix, default_amount):
+    """Chiede se l'importo e' stato spostato su un'altra posizione gia' nel piano.
+    Torna (dataset_destinazione, id, nome, importo) oppure None."""
+    opts = [p for p in _all_positions(doc) if p["h"]["id"] != escludi_id]
+    if not opts:
+        return None
+    FUORI = "Fuori dal piano: li ho ritirati"
+    pick = st.selectbox("Dove sono finiti questi soldi?",
+                        options=[-1] + list(range(len(opts))),
+                        format_func=lambda i: FUORI if i < 0 else "Spostati su " + opts[i]["label"],
+                        key=f"{ns}_{suffix}_dest",
+                        help="Se li hai spostati su un titolo o una crypto che hai già nel piano, "
+                             "li registro lì come versamento di oggi. Se invece hai comprato "
+                             "qualcosa di nuovo, aggiungilo dal pannello qui sopra.")
+    if pick < 0:
+        return None
+    d = opts[pick]
+    amt = st.number_input(f"Quanto ne hai messo su {d['h']['nome']} (€)", min_value=0.0, step=10.0,
+                          value=float(round(default_amount, 2)),
+                          key=f"{ns}_{suffix}_damt_{escludi_id}_{pick}_{int(round(default_amount * 100))}",
+                          help="Di solito è quanto hai ricavato dalla vendita. Correggilo se hai "
+                               "spostato solo una parte o se il prezzo di scambio era diverso.")
+    return d["ds"], d["h"]["id"], d["h"]["nome"], amt
+
+
 def render_edit_asset(data, doc, holdings, ns):
-    """Riduci l'investito su una posizione, oppure toglila dal piano. Usato da entrambe le tab."""
+    """Riduci l'investito su una posizione o toglila dal piano, spostando l'importo
+    su un'altra posizione esistente. Usato da entrambe le tab."""
     if not holdings:
         return
     kind = "crypto" if ns == "cry" else "titolo"
-    with st.expander(f"✏️ Riduci o rimuovi un {kind}"):
+    with st.expander(f"✏️ Riduci, sposta o rimuovi un {kind}"):
         sel = st.selectbox("Quale", options=[h["id"] for h in holdings],
                            format_func=lambda i: by_id(holdings, i)["nome"], key=f"{ns}_ed_sel")
         h = by_id(holdings, sel)
-        invtot, tranches = _invested_of(data, sel, h)
-        valnow = float(data.get("current", {}).get(sel, h["iniziale"]))
-        valtot = valnow + sum(float(t.get("a", 0)) * ((valnow / h["iniziale"]) if h["iniziale"] else 1.0)
-                              / (t.get("idx", 1) or 1) for t in tranches)
+        invtot, _ = _invested_of(data, sel, h)
+        valtot = _value_of(data, sel, h)
         mc = st.columns(2)
         mc[0].metric("Investito su questa posizione", eur(invtot))
         mc[1].metric("Vale oggi", eur(valtot))
@@ -422,18 +468,28 @@ def render_edit_asset(data, doc, holdings, ns):
                                  step=10.0, value=0.0, key=f"{ns}_ed_amt",
                                  help="Scala in proporzione sia quanto hai messo sia quanto vale oggi: "
                                       "la variazione percentuale della posizione non cambia.")
-        if st.button("Riduci", key=f"{ns}_ed_btn", use_container_width=True):
+        # quota di valore che corrisponde alla fetta ridotta: e' quello che ci ricavi
+        ricavo = (valtot * (amount / invtot)) if invtot else 0.0
+        if amount > 0:
+            st.caption(f"Togliendo {eur(amount)} di investito ricavi circa {eur(ricavo)} ai prezzi di oggi.")
+        dest = _dest_picker(doc, sel, ns, "red", ricavo)
+        label = "Riduci e sposta" if dest else "Riduci"
+        if st.button(label, key=f"{ns}_ed_btn", use_container_width=True):
             if amount <= 0:
                 st.warning("Inserisci un importo maggiore di zero.")
             else:
                 try:
                     svuotata = reduce_holding(data, sel, amount)
+                    msg = (f"{h['nome']} era tutto qui: l'ho tolto dal piano."
+                           if svuotata else
+                           f"Tolti {eur(amount)} da {h['nome']}. Ora ci sono investiti {eur(invtot - amount)}.")
+                    if dest:
+                        ds_d, hid_d, nome_d, amt_d = dest
+                        if amt_d > 0:
+                            add_tranche(ds_d, hid_d, amt_d)
+                            msg += f" Registrati {eur(amt_d)} su {nome_d}."
                     save_data(doc)
-                    if svuotata:
-                        st.success(f"{h['nome']} era tutto qui: l'ho tolto dal piano.")
-                    else:
-                        st.success(f"Tolti {eur(amount)} da {h['nome']}. "
-                                   f"Ora ci sono investiti {eur(invtot - amount)}.")
+                    st.success(msg)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Errore nel salvataggio: {e}")
@@ -442,13 +498,21 @@ def render_edit_asset(data, doc, holdings, ns):
         st.markdown("**Togli dal piano**")
         st.caption(f"Sparisce dalla tabella, dai pesi e dai grafici. I versamenti registrati su "
                    f"{h['nome']} vengono cancellati. Lo storico dei giorni passati resta com'è.")
+        dest_rm = _dest_picker(doc, sel, ns, "rm", valtot)
         ok = st.checkbox(f"Sì, togli «{h['nome']}» dal piano", key=f"{ns}_ed_ok")
-        if st.button(f"Rimuovi {kind}", key=f"{ns}_ed_del", use_container_width=True, disabled=not ok):
+        btn = f"Rimuovi e sposta" if dest_rm else f"Rimuovi {kind}"
+        if st.button(btn, key=f"{ns}_ed_del", use_container_width=True, disabled=not ok):
             try:
                 nome = h["nome"]
                 remove_holding(data, sel)
+                msg = f"{nome} tolto dal piano."
+                if dest_rm:
+                    ds_d, hid_d, nome_d, amt_d = dest_rm
+                    if amt_d > 0:
+                        add_tranche(ds_d, hid_d, amt_d)
+                        msg += f" Registrati {eur(amt_d)} su {nome_d}."
                 save_data(doc)
-                st.success(f"{nome} tolto dal piano.")
+                st.success(msg)
                 st.rerun()
             except Exception as e:
                 st.error(f"Errore nel salvataggio: {e}")
