@@ -346,6 +346,114 @@ def render_add_asset(data, doc, holdings, ns):
                              f"Controlla il simbolo. Dettaglio: {repr(e)[:80]}")
 
 
+def _invested_of(data, hid, h):
+    """Investito = quota iniziale + versamenti registrati."""
+    tr = data.get("pac", {}).get(hid) or []
+    if not isinstance(tr, list):
+        tr = []
+    return float(h["iniziale"]) + sum(float(t.get("a", 0)) for t in tr), tr
+
+
+def reduce_holding(data, hid, amount):
+    """Toglie `amount` euro dall'investito di una posizione, in proporzione: scala
+    allo stesso modo quota iniziale, versamenti e valore attuale. Cosi' la
+    variazione percentuale della posizione resta identica (e' come vendere una
+    fetta, o come correggere un importo inserito sbagliato).
+    Torna True se la posizione e' stata svuotata del tutto (quindi rimossa)."""
+    h = by_id(data.get("holdings", []), hid)
+    invtot, tranches = _invested_of(data, hid, h)
+    rest = invtot - float(amount)
+    if rest < 0.01:
+        remove_holding(data, hid)
+        return True
+    f = rest / invtot
+    valnow = float(data.get("current", {}).get(hid, h["iniziale"]))
+    h["iniziale"] = round(float(h["iniziale"]) * f, 2)
+    data.setdefault("current", {})[hid] = round(valnow * f, 2)
+    if tranches:
+        kept = []
+        for t in tranches:
+            t["a"] = round(float(t.get("a", 0)) * f, 2)
+            if t["a"] >= 0.01:
+                kept.append(t)
+        if kept:
+            data["pac"][hid] = kept
+        else:
+            data["pac"].pop(hid, None)
+    return False
+
+
+def remove_holding(data, hid):
+    """Toglie del tutto una posizione dal piano. Lo storico passato resta com'e':
+    e' il registro di quello che c'era davvero in quei giorni."""
+    h = by_id(data.get("holdings", []), hid)
+    cat = h["cat"] if h else None
+    data["holdings"] = [x for x in data.get("holdings", []) if x["id"] != hid]
+    for key in ("current", "baseline_prices", "pac", "momentum"):
+        d = data.get(key)
+        if isinstance(d, dict):
+            d.pop(hid, None)
+    # se nessun altro titolo usa quella categoria, togli anche il suo target
+    if cat and not any(x["cat"] == cat for x in data["holdings"]):
+        tgt = data.get("cat_target")
+        if isinstance(tgt, dict):
+            tgt.pop(cat, None)
+
+
+def render_edit_asset(data, doc, holdings, ns):
+    """Riduci l'investito su una posizione, oppure toglila dal piano. Usato da entrambe le tab."""
+    if not holdings:
+        return
+    kind = "crypto" if ns == "cry" else "titolo"
+    with st.expander(f"✏️ Riduci o rimuovi un {kind}"):
+        sel = st.selectbox("Quale", options=[h["id"] for h in holdings],
+                           format_func=lambda i: by_id(holdings, i)["nome"], key=f"{ns}_ed_sel")
+        h = by_id(holdings, sel)
+        invtot, tranches = _invested_of(data, sel, h)
+        valnow = float(data.get("current", {}).get(sel, h["iniziale"]))
+        valtot = valnow + sum(float(t.get("a", 0)) * ((valnow / h["iniziale"]) if h["iniziale"] else 1.0)
+                              / (t.get("idx", 1) or 1) for t in tranches)
+        mc = st.columns(2)
+        mc[0].metric("Investito su questa posizione", eur(invtot))
+        mc[1].metric("Vale oggi", eur(valtot))
+
+        st.markdown("**Riduci l'investito**")
+        amount = st.number_input("Quanto vuoi togliere (€)", min_value=0.0, max_value=float(round(invtot, 2)),
+                                 step=10.0, value=0.0, key=f"{ns}_ed_amt",
+                                 help="Scala in proporzione sia quanto hai messo sia quanto vale oggi: "
+                                      "la variazione percentuale della posizione non cambia.")
+        if st.button("Riduci", key=f"{ns}_ed_btn", use_container_width=True):
+            if amount <= 0:
+                st.warning("Inserisci un importo maggiore di zero.")
+            else:
+                try:
+                    svuotata = reduce_holding(data, sel, amount)
+                    save_data(doc)
+                    if svuotata:
+                        st.success(f"{h['nome']} era tutto qui: l'ho tolto dal piano.")
+                    else:
+                        st.success(f"Tolti {eur(amount)} da {h['nome']}. "
+                                   f"Ora ci sono investiti {eur(invtot - amount)}.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Errore nel salvataggio: {e}")
+
+        st.divider()
+        st.markdown("**Togli dal piano**")
+        st.caption(f"Sparisce dalla tabella, dai pesi e dai grafici. I versamenti registrati su "
+                   f"{h['nome']} vengono cancellati. Lo storico dei giorni passati resta com'è.")
+        ok = st.checkbox(f"Sì, togli «{h['nome']}» dal piano", key=f"{ns}_ed_ok")
+        if st.button(f"Rimuovi {kind}", key=f"{ns}_ed_del", use_container_width=True, disabled=not ok):
+            try:
+                nome = h["nome"]
+                remove_holding(data, sel)
+                save_data(doc)
+                st.success(f"{nome} tolto dal piano.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Errore nel salvataggio: {e}")
+
+
 # --------------------------------------------------------------- dati cripto
 CRYPTO_DEFAULT = {
     "base_date": "2026-06-26",
@@ -531,6 +639,7 @@ def render_dashboard(ds, doc, ns):
         f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
 
     render_add_asset(data, doc, holdings, ns)
+    render_edit_asset(data, doc, holdings, ns)
     st.divider()
 
     render_pac(data, doc, holdings, ns)
