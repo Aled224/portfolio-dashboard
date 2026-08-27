@@ -579,11 +579,13 @@ st.markdown("""
 .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700}
 .autobar{display:inline-block;background:#1c2046;border:1px solid #2b3168;border-radius:999px;padding:6px 14px;font-size:12.5px;color:#9aa0d0;margin:2px 0 6px}
 .tblwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%}
+.pgnav{color:#9aa0d0;font-size:12.5px;padding-top:9px;white-space:nowrap}
 .catbar{display:grid;grid-template-columns:150px 1fr 120px;gap:12px;align-items:center;margin:9px 0}
 @media (max-width:640px){
   .ptbl{font-size:12px}
   .ptbl th,.ptbl td{padding:6px 5px;white-space:nowrap}
   .autobar{font-size:11px;padding:5px 10px;white-space:normal}
+  .pgnav{font-size:11px;padding-top:4px;white-space:normal}
   .catbar{grid-template-columns:78px 1fr 58px;gap:6px;font-size:11px}
   .catbar>div:first-child{font-size:11px;line-height:1.1}
   .pill{font-size:10px;padding:1px 7px}
@@ -632,6 +634,30 @@ if _cg_chg:
         save_data(doc); refresh()
     except Exception:
         pass
+
+
+def render_paged_table(head_html, rows, key, page_size=5, nota="dalla più recente"):
+    """Tabella con poche righe visibili e due frecce per scorrere. Lo storico si allunga
+    a ogni lunedì: senza paginazione si mangerebbe tutta la pagina, soprattutto su telefono."""
+    n = len(rows)
+    if n == 0:
+        return
+    pages = max(1, -(-n // page_size))
+    st.session_state.setdefault(key, 0)
+    page = min(max(0, int(st.session_state.get(key, 0))), pages - 1)
+    st.session_state[key] = page
+    a, b = page * page_size, min(n, (page + 1) * page_size)
+    st.markdown("<div class='tblwrap'><table class='ptbl'>" + head_html
+                + f"<tbody>{''.join(rows[a:b])}</tbody></table></div>", unsafe_allow_html=True)
+    if pages > 1:
+        nav = st.columns([1, 1, 2])
+        if nav[0].button("▲ Più recenti", key=f"{key}_up", use_container_width=True, disabled=(page == 0)):
+            st.session_state[key] = page - 1
+            st.rerun()
+        if nav[1].button("▼ Più vecchie", key=f"{key}_dn", use_container_width=True, disabled=(page >= pages - 1)):
+            st.session_state[key] = page + 1
+            st.rerun()
+        nav[2].markdown(f"<div class='pgnav'>Righe {a + 1}-{b} di {n} · {nota}</div>", unsafe_allow_html=True)
 
 
 def render_dashboard(ds, doc, ns):
@@ -780,14 +806,13 @@ def render_dashboard(ds, doc, ns):
                  .configure_view(strokeOpacity=0))
         st.altair_chart(chart, use_container_width=True)
         base_tot = hist[0]["total"]
-        trows = ""
+        trows = []
         for h in reversed(hist):
             d = (h["total"] - base_tot) / base_tot * 100 if base_tot else 0
-            trows += f"<tr><td>{itdate(h['date'])}</td><td>{eur(h['total'])}</td><td>{vspan(d)}</td></tr>"
-        st.markdown(
-            "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Data</th><th>Valore totale</th>"
-            f"<th>Var. dall'inizio</th></tr></thead><tbody>{trows}</tbody></table></div>",
-            unsafe_allow_html=True)
+            trows.append(f"<tr><td>{itdate(h['date'])}</td><td>{eur(h['total'])}</td><td>{vspan(d)}</td></tr>")
+        render_paged_table(
+            "<thead><tr><th>Data</th><th>Valore totale</th><th>Var. dall'inizio</th></tr></thead>",
+            trows, key=f"{ns}_histpage", page_size=5)
     else:
         st.caption("Il grafico crescerà a ogni aggiornamento dei prezzi.")
 
