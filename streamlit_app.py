@@ -20,9 +20,24 @@ import news
 
 st.set_page_config(page_title="Portafoglio", page_icon="📊", layout="wide")
 
-PALETTE = ["#3b82f6", "#a78bfa", "#22d3ee", "#fb923c", "#34d399",
+PALETTE = ["#3b82f6", "#a78bfa", "#22d3ee", "#fb923c", "#0f7a3d",
            "#f472b6", "#facc15", "#f87171", "#38bdf8", "#c084fc"]
-GREEN, RED, MUTED, LINE, GOLD = "#2ecc71", "#ff5d6c", "#9aa0d0", "#2b3168", "#ffcf5c"
+GREEN, RED, MUTED, LINE, GOLD = "#0f7a3d", "#c42a3a", "#475569", "#d5dbe6", "#9a6a00"
+
+
+def done(msg):
+    """Conferma che resta visibile: la salvo, ricarico la pagina e la mostro in cima
+    (senza questo il messaggio sparirebbe subito con il ricaricamento)."""
+    st.session_state["flash"] = msg
+    st.rerun()
+
+
+def show_flash():
+    msg = st.session_state.pop("flash", None)
+    if msg:
+        st.toast(f"✅ {msg}")
+        st.markdown(f"<div class='flash'><span class='fic'>✓</span><div><b>Fatto.</b> {msg}</div></div>",
+                    unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------- formattazione
@@ -42,6 +57,15 @@ def pct(n):
 
 def num1(n):
     return f"{n:.1f}".replace(".", ",")
+
+
+def qtyfmt(n):
+    """Numero di azioni/monete: fino a 4 decimali, senza zeri inutili (5 · 0,7812 · 411,82)."""
+    if n is None:
+        return "–"
+    dec = 0 if abs(n - round(n)) < 1e-9 else (2 if abs(n) >= 100 else 5)
+    s = f"{n:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return s.rstrip("0").rstrip(",") if "," in s else s
 
 
 def itdate(iso):
@@ -123,6 +147,21 @@ def cat_colors(holdings):
     return {c: PALETTE[i % len(PALETTE)] for i, c in enumerate(cats)}
 
 
+def qty_of(data, h):
+    """Quante azioni/monete avevi il giorno di partenza.
+    Soldi messi quel giorno / prezzo di quel giorno (100 € a 1 € = 100 azioni).
+    Da qui in poi: valore = azioni x prezzo di oggi."""
+    base = float(data.get("baseline_prices", {}).get(h["id"]) or 0)
+    return (float(h["iniziale"]) / base) if base else None
+
+
+def tranche_qty(data, h, t):
+    """Azioni comprate con un versamento: euro versati / prezzo del giorno del versamento."""
+    base = float(data.get("baseline_prices", {}).get(h["id"]) or 0)
+    p = base * float(t.get("idx", 1) or 1)
+    return (float(t.get("a", 0)) / p) if p else 0.0
+
+
 def compute(data):
     holdings = data.get("holdings", [])
     current = data.get("current", {})
@@ -141,8 +180,16 @@ def compute(data):
         invtot = iniz + addcost
         valtot = valnow + addvalue
         chg = (valtot - invtot) / invtot * 100 if invtot else 0.0
+        q0 = qty_of(data, h)
+        qtot = (q0 + sum(tranche_qty(data, h, t) for t in tranches)) if q0 is not None else None
+        # titolo comprato DOPO la partenza ("dal" = data d'acquisto): non e' valore di
+        # partenza, sono soldi versati dopo
+        if h.get("dal") and h["dal"] > data.get("base_date", ""):
+            addcost += iniz
+            iniz = 0.0
         rows.append({"id": hid, "Titolo": h["nome"], "Categoria": h["cat"],
                      "iniziale": iniz, "aggiunte": addcost, "investito": invtot,
+                     "qty": q0, "qty_tot": qtot,
                      "valore": valtot, "var": chg, "n_tranche": len(tranches)})
         tot_iniz += iniz
         tot_add += addcost
@@ -191,23 +238,25 @@ def _slug(text, existing):
     return hid
 
 
-def add_holding(data, nome, sym, cat, amount, is_crypto, source=None, cg_id=None):
-    """Aggiunge un nuovo titolo/crypto al piano. Baseline = prezzo di oggi, cosi'
-    la posizione parte in pari e cresce dal momento in cui la inserisci."""
+def add_holding(data, nome, sym, cat, qty, is_crypto, source=None, cg_id=None):
+    """Aggiunge un nuovo titolo/crypto al piano partendo dal NUMERO di azioni/monete.
+    Baseline = prezzo di oggi: la posizione parte oggi e vale azioni x prezzo."""
     sym = sym.strip().upper()
     if is_crypto and source != "coingecko" and "-" not in sym:
         sym = sym + "-EUR"
     now_eur, ccy = _fetch_now_eur(sym, source=source, cg_id=cg_id)   # valida e prende il prezzo
+    amount = float(qty) * now_eur
     existing = {h["id"] for h in data.get("holdings", [])}
     hid = _slug(nome, existing)
     h = {"id": hid, "nome": nome.strip(), "sym": sym, "ccy": ccy,
-         "iniziale": round(float(amount), 2), "cat": (cat.strip() or "Altro")}
+         "iniziale": round(float(amount), 2), "cat": (cat.strip() or "Altro"),
+         "dal": datetime.date.today().isoformat()}
     if source == "coingecko" and cg_id:
         h["cg_id"] = cg_id
         h["source"] = "coingecko"
         h["ccy"] = "EUR"
     data.setdefault("holdings", []).append(h)
-    data.setdefault("baseline_prices", {})[hid] = now_eur
+    data.setdefault("baseline_prices", {})[hid] = round(float(amount), 2) / float(qty)   # azioni esatte
     data.setdefault("current", {})[hid] = round(float(amount), 2)
     return h
 
@@ -232,8 +281,7 @@ def render_pac(data, doc, holdings, ns):
                 h = add_tranche(data, sel, amount)
                 try:
                     save_data(doc)
-                    st.success(f"Aggiunto + {eur(amount)} su {h['nome']}.")
-                    st.rerun()
+                    done(f"Aggiunto + {eur(amount)} su {h['nome']}.")
                 except Exception as e:
                     st.error(f"Errore nel salvataggio: {e}")
             else:
@@ -264,13 +312,81 @@ def render_pac(data, doc, holdings, ns):
     st.divider()
 
 
+def _render_add_existing(data, doc, holdings, ns, unit):
+    """Aggiunge azioni/monete a una posizione gia' nel piano: o dici quante ne hai
+    comprate, o dici quanto vale ora tutto quello che hai e il conto lo fa l'app.
+    Si registra come versamento in euro, cosi' 'Versato dopo' resta in soldi."""
+    fmt = "%.6f" if ns == "cry" else "%.5f"
+    sel = st.selectbox("Scegli", options=[h["id"] for h in holdings],
+                       format_func=lambda i: by_id(holdings, i)["nome"], key=f"{ns}_ex_sel")
+    h = by_id(holdings, sel)
+    _, tr = _invested_of(data, sel, h)
+    valtot = _value_of(data, sel, h)
+    qtot = (qty_of(data, h) or 0.0) + sum(tranche_qty(data, h, t) for t in tr)
+    price = (valtot / qtot) if qtot else 0.0     # prezzo di una azione all'ultimo aggiornamento
+    mc = st.columns(2)
+    mc[0].metric(f"{unit.capitalize()} che hai", qtyfmt(qtot))
+    mc[1].metric("Valgono oggi", eur(valtot))
+
+    PER_NUM = f"Ti dico quante {unit} ho comprato"
+    PER_VAL = "Ti dico quanto vale ora tutto quello che ho"
+    how = st.radio("Come preferisci", [PER_NUM, PER_VAL], key=f"{ns}_ex_how_{sel}")
+    if how == PER_NUM:
+        qty = st.number_input(f"Quante {unit} hai comprato", min_value=0.0, step=1.0, value=0.0,
+                              format=fmt, key=f"{ns}_ex_qty_{sel}")
+    else:
+        tot_now = st.number_input("Quanto vale ora tutto quello che hai (€)", min_value=0.0, step=10.0,
+                                  value=float(round(valtot, 2)), key=f"{ns}_ex_tot_{sel}",
+                                  help="Lo trovi nell'app della banca o del broker. Calcolo io quante "
+                                       f"{unit} hai aggiunto, al prezzo dell'ultimo aggiornamento.")
+        qty = max(0.0, (tot_now / price) - qtot) if price else 0.0
+        if qty > 0:
+            st.caption(f"Quindi ora hai {qtyfmt(qtot + qty)} {unit}: ne hai aggiunte {qtyfmt(qty)}.")
+    spent = st.number_input("Quanto hai speso (€)", min_value=0.0, step=10.0,
+                            value=float(round(qty * price, 2)),
+                            key=f"{ns}_ex_eur_{sel}_{int(round(qty * 1e6))}",
+                            help=f"Te lo propongo al prezzo dell'ultimo aggiornamento ({eur2(price)} "
+                                 f"per {'azione' if unit == 'azioni' else 'moneta'}). "
+                                 "Correggilo con quanto hai pagato davvero.")
+    if st.button(f"Aggiungi {unit}", key=f"{ns}_ex_btn", type="primary", use_container_width=True):
+        if qty <= 0 or spent <= 0:
+            st.warning(f"Non risultano {unit} da aggiungere: controlla i numeri.")
+        else:
+            try:
+                add_tranche(data, sel, spent, qty=qty)
+                save_data(doc)
+                done(f"Aggiunte {qtyfmt(qty)} {unit} a {h['nome']} ({eur(spent)}).")
+            except Exception as e:
+                st.error(f"Errore nel salvataggio: {e}")
+
+
+def render_manage(data, doc, holdings, ns):
+    """Un solo pannello, tre scelte: aggiungi a una posizione che hai, aggiungi
+    una posizione nuova, riduci/sposta/rimuovi. Usato da entrambe le tab."""
+    is_crypto = (ns == "cry")
+    unit = "monete" if is_crypto else "azioni"
+    ESIST = "➕ Aggiungi a una crypto che ho già" if is_crypto else "➕ Aggiungi a un titolo che ho già"
+    NUOVO = "🆕 Aggiungi una nuova crypto" if is_crypto else "🆕 Aggiungi un nuovo titolo"
+    RIDUCI = "✏️ Riduci, sposta o rimuovi"
+    with st.expander(f"✏️ Modifica le tue {unit}"):
+        opts = [ESIST, NUOVO, RIDUCI] if holdings else [NUOVO]
+        mode = st.radio("Cosa vuoi fare", opts, key=f"{ns}_manage_mode")
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+        if mode == ESIST:
+            _render_add_existing(data, doc, holdings, ns, unit)
+        elif mode == NUOVO:
+            render_add_asset(data, doc, holdings, ns)
+        else:
+            render_edit_asset(data, doc, holdings, ns)
+
+
 def render_add_asset(data, doc, holdings, ns):
     """Aggiungi un nuovo titolo/crypto: scrivi il nome, scegli dal menu (nome + simbolo
     compilati in automatico da Yahoo/CoinGecko), oppure inseriscilo a mano. Usato da entrambe le tab."""
     is_crypto = (ns == "cry")
     kind = "crypto" if is_crypto else "titolo"
     fonte = "CoinGecko" if is_crypto else "Yahoo Finance"
-    with st.expander(f"➕ Aggiungi un nuovo {kind} al piano"):
+    with st.container():
         q = st.text_input("Scrivi nome", key=f"{ns}_q",
                           placeholder="Bitcoin" if is_crypto else "Apple",
                           help=f"Man mano che scrivi ti propongo i risultati reali di {fonte}. "
@@ -308,7 +424,10 @@ def render_add_asset(data, doc, holdings, ns):
             cat_pick = st.selectbox("Categoria", options=cats + [NUOVA], key=f"{ns}_catsel")
             cat = st.text_input("Nome nuova categoria", key=f"{ns}_catnew") if cat_pick == NUOVA else cat_pick
 
-        amount = st.number_input("Importo (€)", min_value=0.0, step=10.0, value=0.0, key=f"{ns}_amt")
+        unit = "monete" if is_crypto else "azioni"
+        amount = st.number_input(f"Quante {unit} hai", min_value=0.0, step=1.0, value=0.0,
+                                 format="%.6f" if is_crypto else "%.5f", key=f"{ns}_qty",
+                                 help="La posizione parte da oggi: vale queste quantità per il prezzo di oggi.")
 
         if st.button(f"Aggiungi {kind}", key=f"{ns}_addbtn", type="primary", use_container_width=True):
             if manual:
@@ -324,14 +443,13 @@ def render_add_asset(data, doc, holdings, ns):
             elif not is_crypto and not str(cat).strip():
                 st.warning("Scegli una categoria.")
             elif amount <= 0:
-                st.warning("Inserisci l'importo investito (maggiore di zero).")
+                st.warning(f"Inserisci quante {unit} hai (maggiore di zero).")
             else:
                 try:
                     h = add_holding(data, nome, sym, cat, amount, is_crypto, source=source, cg_id=cg_id)
                     save_data(doc)
-                    st.success(f"Aggiunto {h['nome']} ({h['sym']}) al piano. "
-                               "Comparirà anche nella tabella, nei pesi e nei grafici di andamento.")
-                    st.rerun()
+                    done(f"Aggiunto {h['nome']} ({h['sym']}): {qtyfmt(amount)} {unit}. "
+                               "Comparirà anche nella tabella e nei grafici di andamento.")
                 except Exception as e:
                     st.error(f"Non riesco a recuperare il prezzo di «{sym.upper()}». "
                              f"Controlla il simbolo. Dettaglio: {repr(e)[:80]}")
@@ -346,7 +464,7 @@ def _invested_of(data, hid, h):
 
 
 def reduce_holding(data, hid, amount):
-    """Toglie `amount` euro dall'investito di una posizione, in proporzione: scala
+    """Toglie `amount` euro (la fetta di azioni vendute) da una posizione, in proporzione: scala
     allo stesso modo quota iniziale, versamenti e valore attuale. Cosi' la
     variazione percentuale della posizione resta identica (e' come vendere una
     fetta, o come correggere un importo inserito sbagliato).
@@ -409,11 +527,16 @@ def _all_positions(doc):
     return out
 
 
-def add_tranche(ds, hid, amount):
-    """Registra un versamento su una posizione, alla quotazione di oggi."""
+def add_tranche(ds, hid, amount, qty=None):
+    """Registra un versamento su una posizione, alla quotazione di oggi.
+    Con `qty` (azioni comprate) il prezzo pagato e' amount / qty: cosi' le azioni
+    aggiunte sono esattamente quelle, anche se hai pagato un prezzo diverso."""
     h = by_id(ds.get("holdings", []), hid)
     cur = float(ds.get("current", {}).get(hid, h["iniziale"]))
     idx = (cur / h["iniziale"]) if h["iniziale"] else 1.0
+    base = float(ds.get("baseline_prices", {}).get(hid) or 0)
+    if qty and base:
+        idx = float(amount) / (float(qty) * base)
     lst = ds.setdefault("pac", {}).get(hid)
     if not isinstance(lst, list):
         lst = []
@@ -449,72 +572,83 @@ def _dest_picker(doc, escludi_id, ns, suffix, default_amount):
 
 
 def render_edit_asset(data, doc, holdings, ns):
-    """Riduci l'investito su una posizione o toglila dal piano, spostando l'importo
-    su un'altra posizione esistente. Usato da entrambe le tab."""
+    """Togli azioni da una posizione (per numero o per valore che ti resta) oppure
+    toglila tutta dal piano, con un clic. Usato da entrambe le tab."""
     if not holdings:
         return
-    kind = "crypto" if ns == "cry" else "titolo"
-    with st.expander(f"✏️ Riduci, sposta o rimuovi un {kind}"):
-        sel = st.selectbox("Quale", options=[h["id"] for h in holdings],
-                           format_func=lambda i: by_id(holdings, i)["nome"], key=f"{ns}_ed_sel")
-        h = by_id(holdings, sel)
-        invtot, _ = _invested_of(data, sel, h)
-        valtot = _value_of(data, sel, h)
-        mc = st.columns(2)
-        mc[0].metric("Investito su questa posizione", eur(invtot))
-        mc[1].metric("Vale oggi", eur(valtot))
+    unit = "monete" if ns == "cry" else "azioni"
+    fmt = "%.6f" if ns == "cry" else "%.5f"
+    sel = st.selectbox("Scegli", options=[h["id"] for h in holdings],
+                       format_func=lambda i: by_id(holdings, i)["nome"], key=f"{ns}_ed_sel")
+    h = by_id(holdings, sel)
+    invtot, tr = _invested_of(data, sel, h)
+    valtot = _value_of(data, sel, h)
+    q0 = qty_of(data, h)
+    qtot = (q0 or 0.0) + sum(tranche_qty(data, h, t) for t in tr)
+    price = (valtot / qtot) if qtot else 0.0
+    mc = st.columns(2)
+    mc[0].metric(f"{unit.capitalize()} che hai", qtyfmt(qtot))
+    mc[1].metric("Valgono oggi", eur(valtot))
 
-        st.markdown("**Riduci l'investito**")
-        amount = st.number_input("Quanto vuoi togliere (€)", min_value=0.0, max_value=float(round(invtot, 2)),
-                                 step=10.0, value=0.0, key=f"{ns}_ed_amt",
-                                 help="Scala in proporzione sia quanto hai messo sia quanto vale oggi: "
-                                      "la variazione percentuale della posizione non cambia.")
-        # quota di valore che corrisponde alla fetta ridotta: e' quello che ci ricavi
-        ricavo = (valtot * (amount / invtot)) if invtot else 0.0
-        if amount > 0:
-            st.caption(f"Togliendo {eur(amount)} di investito ricavi circa {eur(ricavo)} ai prezzi di oggi.")
-        dest = _dest_picker(doc, sel, ns, "red", ricavo)
-        label = "Riduci e sposta" if dest else "Riduci"
-        if st.button(label, key=f"{ns}_ed_btn", use_container_width=True):
-            if amount <= 0:
-                st.warning("Inserisci un importo maggiore di zero.")
-            else:
-                try:
-                    svuotata = reduce_holding(data, sel, amount)
-                    msg = (f"{h['nome']} era tutto qui: l'ho tolto dal piano."
-                           if svuotata else
-                           f"Tolti {eur(amount)} da {h['nome']}. Ora ci sono investiti {eur(invtot - amount)}.")
-                    if dest:
-                        ds_d, hid_d, nome_d, amt_d = dest
-                        if amt_d > 0:
-                            add_tranche(ds_d, hid_d, amt_d)
-                            msg += f" Registrati {eur(amt_d)} su {nome_d}."
-                    save_data(doc)
-                    st.success(msg)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Errore nel salvataggio: {e}")
+    PER_NUM = f"Ho venduto un numero di {unit}"
+    PER_VAL = "Ti dico quanto vale ora quello che mi resta"
+    TUTTO = "Togli tutto dal piano"
+    how = st.radio("Cosa hai fatto", [PER_NUM, PER_VAL, TUTTO], key=f"{ns}_ed_how_{sel}")
 
-        st.divider()
-        st.markdown("**Togli dal piano**")
-        st.caption(f"Sparisce dalla tabella, dai pesi e dai grafici. I versamenti registrati su "
-                   f"{h['nome']} vengono cancellati. Lo storico dei giorni passati resta com'è.")
+    if how == TUTTO:
+        st.caption(f"Tolgo {h['nome']} dalla tabella e dai grafici, con tutti i suoi versamenti. "
+                   "Lo storico dei giorni passati resta com'è.")
         dest_rm = _dest_picker(doc, sel, ns, "rm", valtot)
-        ok = st.checkbox(f"Sì, togli «{h['nome']}» dal piano", key=f"{ns}_ed_ok")
-        btn = f"Rimuovi e sposta" if dest_rm else f"Rimuovi {kind}"
-        if st.button(btn, key=f"{ns}_ed_del", use_container_width=True, disabled=not ok):
+        if st.button(f"Togli {h['nome']} dal piano" + (" e sposta" if dest_rm else ""),
+                     key=f"{ns}_ed_del_{sel}", use_container_width=True):
             try:
-                nome = h["nome"]
                 remove_holding(data, sel)
-                msg = f"{nome} tolto dal piano."
+                msg = f"{h['nome']} tolto dal piano."
                 if dest_rm:
                     ds_d, hid_d, nome_d, amt_d = dest_rm
                     if amt_d > 0:
                         add_tranche(ds_d, hid_d, amt_d)
                         msg += f" Registrati {eur(amt_d)} su {nome_d}."
                 save_data(doc)
-                st.success(msg)
-                st.rerun()
+                done(msg)
+            except Exception as e:
+                st.error(f"Errore nel salvataggio: {e}")
+        return
+
+    if how == PER_NUM:
+        sold = st.number_input(f"Quante {unit} hai venduto", min_value=0.0, max_value=float(qtot),
+                               step=1.0, value=0.0, format=fmt, key=f"{ns}_ed_qty_{sel}")
+    else:
+        left = st.number_input("Quanto vale ora quello che ti resta (€)", min_value=0.0,
+                               max_value=float(round(valtot, 2)), step=10.0, value=float(round(valtot, 2)),
+                               key=f"{ns}_ed_left_{sel}",
+                               help="Lo trovi nell'app della banca o del broker. Calcolo io quante "
+                                    f"{unit} hai venduto, al prezzo dell'ultimo aggiornamento.")
+        sold = max(0.0, qtot - (left / price)) if price else 0.0
+        if sold > 0:
+            st.caption(f"Quindi ti restano {qtyfmt(qtot - sold)} {unit}: ne hai vendute {qtyfmt(sold)}.")
+    frac = (sold / qtot) if qtot else 0.0
+    amount = invtot * frac
+    ricavo = valtot * frac
+    if sold > 0 and how == PER_NUM:
+        st.caption(f"Vendendo {qtyfmt(sold)} {unit} ricavi circa {eur(ricavo)} ai prezzi di oggi.")
+    dest = _dest_picker(doc, sel, ns, "red", ricavo)
+    if st.button("Togli e sposta" if dest else "Togli", key=f"{ns}_ed_btn_{sel}", use_container_width=True):
+        if sold <= 0:
+            st.warning(f"Non risultano {unit} vendute: controlla il numero.")
+        else:
+            try:
+                svuotata = reduce_holding(data, sel, amount)
+                msg = (f"{h['nome']} era tutto qui: l'ho tolto dal piano."
+                       if svuotata else
+                       f"Tolte {qtyfmt(sold)} {unit} da {h['nome']}. Ne restano {qtyfmt(qtot - sold)}.")
+                if dest:
+                    ds_d, hid_d, nome_d, amt_d = dest
+                    if amt_d > 0:
+                        add_tranche(ds_d, hid_d, amt_d)
+                        msg += f" Registrati {eur(amt_d)} su {nome_d}."
+                save_data(doc)
+                done(msg)
             except Exception as e:
                 st.error(f"Errore nel salvataggio: {e}")
 
@@ -572,40 +706,112 @@ else:
 
 st.markdown("""
 <style>
-.ptbl{width:100%;border-collapse:collapse;font-size:14px;margin-top:4px}
-.ptbl th{color:#9aa0d0;text-align:right;padding:9px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #2b3168}
-.ptbl td{text-align:right;padding:9px 8px;border-bottom:1px solid #2b3168}
-.ptbl th:first-child,.ptbl td:first-child{text-align:left}
-.ptbl tr.tot td{font-weight:700;border-top:2px solid #2b3168;border-bottom:none}
-.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700}
-.autobar{display:inline-block;background:#1c2046;border:1px solid #2b3168;border-radius:999px;padding:6px 14px;font-size:12.5px;color:#9aa0d0;margin:2px 0 6px}
-.tblwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%}
+/* =========================================================================
+   Tema chiaro ad alto contrasto. Scala: testo 18px, tabelle 17px, note 15px.
+   Testo #0f172a, secondario #475569 (contrasto AA su bianco e sul fondo).
+   ========================================================================= */
+:root{--ink:#0f172a;--ink2:#334155;--mute:#475569;--line:#d5dbe6;--soft:#f6f8fb;--card:#ffffff;--brand:#2446c8}
+.block-container{max-width:1180px;padding-top:2.2rem !important;padding-bottom:4rem !important}
+h1{font-size:2.15rem !important;font-weight:800 !important;letter-spacing:-.5px;color:var(--ink) !important}
+h2,h3{color:var(--ink) !important;font-weight:750 !important;letter-spacing:-.3px}
+h3{font-size:1.45rem !important;margin:.4rem 0 .5rem !important}
+p, li, label{color:var(--ink)}
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p{font-size:15.5px !important;color:var(--mute) !important;line-height:1.5}
+[data-testid="stWidgetLabel"] p{font-size:16px !important;font-weight:600;color:var(--ink2) !important}
+hr{margin:2rem 0 !important;border-color:var(--line) !important}
+
+/* schede Azioni / Crypto / Panoramica */
+[data-testid="stTabs"] [role="tablist"]{gap:6px;border-bottom:2px solid var(--line)}
+[data-testid="stTabs"] button[role="tab"]{padding:10px 18px;border-radius:10px 10px 0 0}
+[data-testid="stTabs"] button[role="tab"] p{font-size:18px !important;font-weight:700;color:var(--mute)}
+[data-testid="stTabs"] button[role="tab"][aria-selected="true"] p{color:var(--brand)}
+
+/* riquadri numerici */
+[data-testid="stMetric"]{background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:16px 18px;box-shadow:0 1px 2px rgba(15,23,42,.05),0 4px 14px rgba(15,23,42,.04);height:100%}
+[data-testid="stMetricLabel"] p{font-size:15px !important;font-weight:600;color:var(--mute) !important}
+[data-testid="stMetricValue"]{font-size:30px !important;font-weight:800;color:var(--ink);letter-spacing:-.5px}
+[data-testid="stMetricDelta"]{font-size:15px !important;font-weight:700}
+
+/* pannelli apribili */
+[data-testid="stExpander"] details{background:var(--card);border:1px solid var(--line) !important;border-radius:14px;
+  box-shadow:0 1px 2px rgba(15,23,42,.04)}
+[data-testid="stExpander"] summary p{font-size:17px !important;font-weight:700;color:var(--ink)}
+
+/* pulsanti */
+.stButton button, .stFormSubmitButton button{min-height:46px;font-size:16.5px !important;font-weight:700;border-radius:10px}
+.stButton button p, .stFormSubmitButton button p{font-size:16.5px !important;font-weight:700}
+/* bottoni blu (es. Aggiorna prezzi): testo bianco */
+button[kind="primary"], button[kind="primaryFormSubmit"],
+button[kind="primary"] p, button[kind="primaryFormSubmit"] p,
+button[data-testid="stBaseButton-primary"] p{color:#ffffff !important}
+/* bottoni bianchi: testo scuro */
+button[kind="secondary"] p, button[kind="secondaryFormSubmit"] p,
+button[data-testid="stBaseButton-secondary"] p{color:var(--ink) !important}
+
+/* tabelle */
+.tblwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;background:var(--card);
+  border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 2px rgba(15,23,42,.05)}
+.ptbl{width:100%;border-collapse:collapse;font-size:17px;color:var(--ink)}
+.ptbl th{background:var(--soft);color:var(--ink2);text-align:right;padding:12px 14px;font-size:13px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.3px;border-bottom:1px solid var(--line);vertical-align:bottom;line-height:1.3}
+.ptbl td{text-align:right;padding:13px 14px;border-bottom:1px solid #e6eaf1;font-variant-numeric:tabular-nums}
+.ptbl tbody tr:nth-child(even) td{background:#fafbfd}
+.ptbl tbody tr:hover td{background:#eef3ff}
+.ptbl th:first-child,.ptbl td:first-child{text-align:left;font-weight:600}
+.ptbl tr.tot td{font-weight:800;border-top:2px solid #b9c2d3;border-bottom:none;background:var(--soft) !important}
+.pill{display:inline-block;padding:4px 11px;border-radius:999px;font-size:13.5px;font-weight:700;white-space:nowrap}
+.autobar{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:9px 16px;font-size:15.5px;color:var(--ink2);margin:2px 0 8px;line-height:1.45}
+.autobar b{color:var(--ink)}
 .catbar{display:grid;grid-template-columns:150px 1fr 120px;gap:12px;align-items:center;margin:9px 0}
+
+/* conferma dopo ogni operazione */
+.flash{display:flex;gap:12px;align-items:center;background:#e8f6ee;border:1px solid #8fd1a9;border-left:6px solid #0f7a3d;
+  border-radius:12px;padding:14px 18px;margin:4px 0 14px;font-size:17px;color:#0f172a;animation:flin .35s ease-out}
+.flash b{color:#0f7a3d}
+.fic{flex:0 0 32px;height:32px;border-radius:50%;background:#0f7a3d;color:#fff;font-weight:800;font-size:18px;
+  display:flex;align-items:center;justify-content:center}
+@keyframes flin{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+
+/* spunti */
+.advgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:14px;margin-top:10px}
+.advcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;
+  box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.advt{font-weight:750;margin-bottom:8px;font-size:17px;color:var(--ink)}
+.advx{color:var(--ink2);font-size:16px;line-height:1.6}
+
+/* grafici su carta bianca */
+[data-testid="stVegaLiteChart"], [data-testid="stArrowVegaLiteChart"]{background:var(--card);border:1px solid var(--line);
+  border-radius:14px;padding:12px 10px 4px}
+
+/* ============================== TELEFONO ============================== */
 @media (max-width:640px){
-  .ptbl{font-size:12px}
-  .ptbl th,.ptbl td{padding:6px 5px;white-space:nowrap}
-  .autobar{font-size:11px;padding:5px 10px;white-space:normal}
-  .catbar{grid-template-columns:78px 1fr 58px;gap:6px;font-size:11px}
-  .catbar>div:first-child{font-size:11px;line-height:1.1}
-  .pill{font-size:10px;padding:1px 7px}
-}
-.advgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px;margin-top:6px}
-.advcard{background:#1c2046;border:1px solid #2b3168;border-radius:14px;padding:14px 16px}
-.advt{font-weight:700;margin-bottom:6px;font-size:14px}
-.advx{color:#c7cbe8;font-size:13px;line-height:1.5}
-@media (max-width:640px){.advgrid{grid-template-columns:1fr}}
-/* ------- MOBILE: colonne che si impilano, margini piu' stretti, testo leggibile ------- */
-@media (max-width:640px){
-  .block-container{padding:1rem 0.6rem 3rem !important}
-  /* le colonne Streamlit vanno a capo invece di stringersi */
+  .block-container{padding:1.1rem .8rem 3rem !important}
+  h1{font-size:1.7rem !important}
+  h3{font-size:1.25rem !important}
   [data-testid="stHorizontalBlock"]{flex-wrap:wrap !important;gap:10px !important}
-  [data-testid="stHorizontalBlock"] > div{flex:1 1 130px !important;min-width:130px !important}
-  /* cards metriche piu' compatte */
-  [data-testid="stMetricValue"]{font-size:20px !important}
-  [data-testid="stMetricLabel"]{font-size:12px !important}
-  /* selettore periodo (radio) che va a capo senza tagliarsi */
+  [data-testid="stHorizontalBlock"] > div{flex:1 1 145px !important;min-width:145px !important}
+  [data-testid="stMetric"]{padding:12px 14px}
+  [data-testid="stMetricLabel"] p{font-size:13.5px !important}
+  [data-testid="stMetricValue"]{font-size:23px !important}
+  [data-testid="stMetricDelta"]{font-size:13.5px !important}
+  [data-testid="stTabs"] button[role="tab"]{padding:8px 10px}
+  [data-testid="stTabs"] button[role="tab"] p{font-size:16px !important}
+  /* tabelle: il nome resta fermo a sinistra, il resto scorre di lato */
+  .ptbl{font-size:15.5px}
+  .ptbl th,.ptbl td{padding:11px 10px;white-space:nowrap}
+  .ptbl th{font-size:12px}
+  .ptbl th:first-child,.ptbl td:first-child{position:sticky;left:0;z-index:1;background:var(--card);
+    box-shadow:2px 0 0 var(--line);max-width:150px;white-space:normal}
+  .ptbl tbody tr:nth-child(even) td:first-child{background:#fafbfd}
+  .ptbl th:first-child{background:var(--soft)}
+  .hm{display:none}
+  .autobar{font-size:14.5px;padding:9px 12px;white-space:normal}
+  .pill{font-size:12.5px;padding:3px 9px}
+  .advgrid{grid-template-columns:1fr}
+  .advx{font-size:15.5px}
   [role="radiogroup"]{flex-wrap:wrap !important}
-  /* niente scroll orizzontale della pagina */
   .main .block-container{overflow-x:hidden}
 }
 </style>
@@ -613,6 +819,7 @@ st.markdown("""
 
 _th = st.columns([6, 1.4])
 _th[0].title("📊 Il mio portafoglio")
+show_flash()
 with _th[1]:
     st.write("")
     if st.button("🔄 Ricarica dal cloud", use_container_width=True,
@@ -638,25 +845,25 @@ if _cg_chg:
 SCROLL_TBL = """
 <style>
  *{box-sizing:border-box}
- body{margin:0;background:transparent;color:#eef0ff;
+ body{margin:0;background:transparent;color:#0f172a;
       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
  .wrap{display:flex;gap:8px;align-items:stretch}
  .box{flex:1;min-width:0;height:__H__px;overflow-y:auto;overflow-x:auto;
       -webkit-overflow-scrolling:touch;border-radius:10px}
  .box::-webkit-scrollbar{width:6px;height:6px}
- .box::-webkit-scrollbar-thumb{background:#2b3168;border-radius:999px}
+ .box::-webkit-scrollbar-thumb{background:#e3e6ef;border-radius:999px}
  .box::-webkit-scrollbar-track{background:transparent}
- table{width:100%;border-collapse:collapse;font-size:14px}
- th{color:#9aa0d0;text-align:right;padding:0 8px;height:32px;font-size:11px;text-transform:uppercase;
-    letter-spacing:.4px;border-bottom:1px solid #2b3168;position:sticky;top:0;background:#0f1226;z-index:2}
- td{text-align:right;padding:0 8px;height:36px;border-bottom:1px solid #2b3168;white-space:nowrap}
+ table{width:100%;border-collapse:collapse;font-size:17px;background:#ffffff;font-variant-numeric:tabular-nums}
+ th{color:#475569;text-align:right;padding:0 8px;height:32px;font-size:12.5px;font-weight:600;text-transform:uppercase;
+    letter-spacing:.3px;border-bottom:1px solid #e3e6ef;position:sticky;top:0;background:#f5f6fa;z-index:2}
+ td{text-align:right;padding:0 8px;height:36px;border-bottom:1px solid #e3e6ef;white-space:nowrap}
  th:first-child,td:first-child{text-align:left}
  .nav{display:flex;flex-direction:column;justify-content:center;gap:6px;flex:0 0 auto}
- .nav button{width:34px;height:38px;border-radius:10px;background:#1c2046;border:1px solid #2b3168;
-             color:#9aa0d0;font-size:12px;line-height:1;cursor:pointer;transition:.15s}
- .nav button:hover:not(:disabled){color:#eef0ff;border-color:#6c8cff}
+ .nav button{width:34px;height:38px;border-radius:10px;background:#ffffff;border:1px solid #e3e6ef;
+             color:#475569;font-size:12px;line-height:1;cursor:pointer;transition:.15s}
+ .nav button:hover:not(:disabled){color:#0f172a;border-color:#2446c8}
  .nav button:disabled{opacity:.3;cursor:default}
- @media (max-width:640px){table{font-size:12px} th,td{padding:0 5px}
+ @media (max-width:640px){table{font-size:15.5px} th{font-size:12px} th,td{padding:0 9px}
    .nav button{width:30px;height:34px}}
 </style>
 <div class="wrap">
@@ -700,7 +907,6 @@ def render_scroll_table(head_html, rows, visible=5):
 def render_dashboard(ds, doc, ns):
     data = ds
     holdings = data.get("holdings", [])
-    cat_target = data.get("cat_target", {})
     colors = cat_colors(holdings)
     rows, totals = compute(data)
     last_update = data.get("last_update", "")
@@ -710,7 +916,7 @@ def render_dashboard(ds, doc, ns):
     with top[0]:
         nm = next_monday(last_update)
         st.markdown(
-            f"<div class='autobar'>📅 Investimento iniziale del <b>{itdate(base_date)}</b> · "
+            f"<div class='autobar'>📅 Partenza: {'monete' if ns == 'cry' else 'azioni'} possedute il <b>{itdate(base_date)}</b> · "
             f"prezzi al <b>{itdate(last_update)}</b> · aggiornamento automatico ogni lunedì"
             + (f" · prossimo <b>{itdate(nm)}</b>" if nm else "") + "</div>",
             unsafe_allow_html=True)
@@ -723,101 +929,60 @@ def render_dashboard(ds, doc, ns):
                     prices.update_prices_in_data(ds, log=lambda *_: None)
                     save_data(doc)
                     refresh()
-                    st.success("Prezzi aggiornati!")
-                    st.rerun()
+                    done("Prezzi aggiornati!")
                 except Exception as e:
                     st.error(f"Aggiornamento non riuscito: {e}")
 
     # -------------------------------------------------------------------------- cards
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Investito totale", eur(totals["init"]))
-    c2.metric("Valore attuale", eur(totals["now"]))
-    c3.metric("Guadagno / Perdita", eur(totals["pl"]), pct(totals["plpct"]))
-    c4.metric("Posizioni", len(holdings))
+    c1.metric(f"Valore di partenza ({itdate(base_date)})", eur(totals["iniz"]),
+              help="Le azioni che avevi quel giorno, al prezzo di quel giorno.")
+    c2.metric("Versato dopo", eur(totals["add"]),
+              help="Soldi aggiunti con i versamenti dopo la partenza.")
+    c3.metric("Valore attuale", eur(totals["now"]))
+    c4.metric("Guadagno / Perdita", eur(totals["pl"]), pct(totals["plpct"]),
+              help="Valore attuale meno (valore di partenza + versato dopo).")
 
     st.divider()
 
     # ------------------------------------------------------------------ tabella titoli
     st.subheader("🧾 I tuoi titoli")
+    unit = "Monete" if ns == "cry" else "Azioni"
     body = ""
     for r in rows:
         col = colors.get(r["Categoria"], "#888")
         dot = (f"<span style='display:inline-block;width:10px;height:10px;border-radius:50%;"
                f"background:{col};margin-right:8px;vertical-align:middle'></span>")
         pill = f"<span class='pill' style='background:{col}22;color:{col}'>{r['Categoria']}</span>"
-        catcell = f"<td style='text-align:left'>{pill}</td>" if ns != "cry" else ""
+        catcell = f"<td class='hm' style='text-align:left'>{pill}</td>" if ns != "cry" else ""
         body += (f"<tr><td>{dot}{r['Titolo']}</td>" + catcell
-                 + f"<td>{eur(r['iniziale'])}</td>"
+                 + f"<td>{qtyfmt(r['qty_tot'])}</td>"
+                 f"<td>{eur(r['iniziale'])}</td>"
                  f"<td>{eur(r['aggiunte']) if r['aggiunte'] else '–'}</td>"
-                 f"<td>{eur(r['investito'])}</td>"
                  f"<td><b>{eur(r['valore'])}</b></td>"
                  f"<td>{vspan(r['var'])}</td></tr>")
-    body += (f"<tr class='tot'><td>TOTALE</td>" + ("<td></td>" if ns != "cry" else "")
-             + f"<td>{eur(totals['iniz'])}</td>"
-             f"<td>{eur(totals['add'])}</td><td>{eur(totals['init'])}</td>"
+    body += (f"<tr class='tot'><td>TOTALE</td>" + ("<td class='hm'></td>" if ns != "cry" else "")
+             + f"<td></td><td>{eur(totals['iniz'])}</td>"
+             f"<td>{eur(totals['add'])}</td>"
              f"<td>{eur(totals['now'])}</td><td>{vspan(totals['plpct'])}</td></tr>")
-    sub = "<span style='font-weight:400;text-transform:none;font-size:10px'>"
+    sub = "<span style='font-weight:400;text-transform:none;font-size:11.5px;color:#64748b'>"
     st.markdown(
         "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th>"
-        + ("<th>Categoria</th>" if ns != "cry" else "")
-        + f"<th>Valore iniziale<br>{sub}{itdate(base_date)}</span></th><th>Aggiunte</th>"
-        f"<th>Investito</th><th>Valore attuale<br>{sub}al {itdate(last_update)}</span></th>"
-        f"<th>Variazione<br>{sub}al {itdate(last_update)}</span></th></tr></thead>"
+        + ("<th class='hm'>Categoria</th>" if ns != "cry" else "")
+        + f"<th>{unit}<br>{sub}possedute oggi</span></th>"
+        f"<th>Valore di partenza<br>{sub}{unit.lower()} al {itdate(base_date)}</span></th>"
+        f"<th>Versato dopo<br>{sub}in euro</span></th>"
+        f"<th>Valore attuale<br>{sub}al {itdate(last_update)}</span></th>"
+        f"<th>Variazione<br>{sub}su partenza + versato</span></th></tr></thead>"
         f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
+    st.caption(f"{unit} di partenza = soldi messi il {itdate(base_date)} ÷ prezzo di quel giorno. "
+               f"Valore attuale = {unit.lower()} × prezzo di oggi. I versamenti successivi restano in euro "
+               f"e comprano {unit.lower()} al prezzo del giorno in cui li registri.")
 
-    render_add_asset(data, doc, holdings, ns)
-    render_edit_asset(data, doc, holdings, ns)
+    render_manage(data, doc, holdings, ns)
     st.divider()
 
     render_pac(data, doc, holdings, ns)
-
-    if ns != "cry":
-        # ------------------------------------------------------------------ categorie
-        st.subheader("🎯 Peso e Target per categoria")
-        cat_now = {}
-        for r in rows:
-            cat_now[r["Categoria"]] = cat_now.get(r["Categoria"], 0.0) + r["valore"]
-        tot_now = totals["now"] or 1
-        order = sorted(cat_now, key=lambda n: -cat_now[n])
-        scale = max([cat_now[n] / tot_now * 100 for n in order] + [cat_target.get(n, 0) for n in order] + [1])
-
-        bars = ""
-        for name in order:
-            peso = cat_now[name] / tot_now * 100
-            tgt = cat_target.get(name, 0)
-            col = colors.get(name, "#888")
-            bars += (
-                "<div class='catbar'>"
-                f"<div style='color:{col};font-weight:700'>{name}</div>"
-                "<div style='background:#171a35;border-radius:999px;height:20px;position:relative;overflow:hidden'>"
-                f"<div style='height:100%;width:{peso/scale*100:.1f}%;background:{col};border-radius:999px'></div>"
-                f"<div style='position:absolute;top:-2px;bottom:-2px;left:{tgt/scale*100:.1f}%;width:2px;background:{GOLD}'></div>"
-                "</div>"
-                f"<div style='color:{MUTED};font-size:13px'>{num1(peso)}% <span style='opacity:.6'>/ {tgt}%</span></div>"
-                "</div>")
-        st.markdown(bars + f"<div style='color:{MUTED};font-size:12px;margin-top:6px'>"
-                    f"La linea oro indica il target di ogni categoria.</div>", unsafe_allow_html=True)
-
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-        st.caption("Apri una categoria per vederne la composizione:")
-        for name in order:
-            peso = cat_now[name] / tot_now * 100
-            tgt = cat_target.get(name, 0)
-            scost = peso - tgt
-            seg = "🟢" if scost >= 0 else "🔴"
-            with st.expander(f"{name}  ·  {num1(peso)}% / target {tgt}%  ·  scostamento {pct(scost)} {seg}"):
-                sub = [r for r in rows if r["Categoria"] == name]
-                srows = ""
-                for r in sub:
-                    wp = r["valore"] / tot_now * 100
-                    srows += (f"<tr><td>{r['Titolo']}</td><td>{eur(r['valore'])}</td>"
-                              f"<td>{num1(wp)}%</td><td>{vspan(r['var'])}</td></tr>")
-                st.markdown(
-                    "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th><th>Valore attuale</th><th>Peso</th>"
-                    f"<th>Variazione valore</th></tr></thead><tbody>{srows}</tbody></table></div>",
-                    unsafe_allow_html=True)
-
-        st.divider()
 
     # ------------------------------------------------------------------ storico
     st.subheader("📈 Andamento del valore totale")
@@ -830,13 +995,13 @@ def render_dashboard(ds, doc, ns):
         hi = max(5000, -(-int(vmax) // step) * step)   # almeno 5000, si estende se serve
         ticks = list(range(lo, hi + step, step))
         chart = (alt.Chart(hpts)
-                 .mark_line(point=alt.OverlayMarkDef(color="#6c8cff", size=55), color="#6c8cff", strokeWidth=2.5)
+                 .mark_line(point=alt.OverlayMarkDef(color="#2446c8", size=55), color="#2446c8", strokeWidth=2.5)
                  .encode(
                      x=alt.X("data:T", sort="ascending", title=None,
-                             axis=alt.Axis(format="%d/%m", labelColor="#9aa0d0", grid=False)),
+                             axis=alt.Axis(format="%d/%m", labelColor="#475569", grid=False)),
                      y=alt.Y("valore:Q", title="€", scale=alt.Scale(domain=[lo, hi]),
-                             axis=alt.Axis(values=ticks, labelColor="#9aa0d0", titleColor="#9aa0d0",
-                                           gridColor="#2b3168")),
+                             axis=alt.Axis(values=ticks, labelColor="#475569", titleColor="#475569",
+                                           gridColor="#e3e6ef")),
                      tooltip=[alt.Tooltip("data:T", title="Data", format="%d/%m/%Y"),
                               alt.Tooltip("valore:Q", title="Valore €", format=",.0f")])
                  .properties(height=300)
@@ -894,9 +1059,9 @@ def render_dashboard(ds, doc, ns):
         cfg = axis_cfg[rng_label]
         xenc = alt.X("data:T", sort="ascending", title=None,
                      axis=alt.Axis(format=cfg["format"], tickCount=cfg["tickCount"],
-                                   labelColor="#9aa0d0", grid=False))
+                                   labelColor="#475569", grid=False))
         yenc = alt.Y("valore:Q", title="€", scale=alt.Scale(zero=False, nice=True),
-                     axis=alt.Axis(labelColor="#9aa0d0", titleColor="#9aa0d0", gridColor="#2b3168"))
+                     axis=alt.Axis(labelColor="#475569", titleColor="#475569", gridColor="#e3e6ef"))
         base = alt.Chart(adf)
         line = base.mark_line(color=line_color, strokeWidth=2).encode(x=xenc, y=yenc)
         nearest = alt.selection_point(nearest=True, on="pointerover", fields=["data"],
@@ -908,10 +1073,10 @@ def render_dashboard(ds, doc, ns):
         ).add_params(nearest)
         pts = line.mark_point(size=75, color=line_color, filled=True).encode(
             opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
-        text = line.mark_text(align="left", dx=7, dy=-10, color="#eef0ff",
+        text = line.mark_text(align="left", dx=7, dy=-10, color="#0f172a",
                               fontSize=13, fontWeight="bold").encode(
             text=alt.condition(nearest, alt.Text("valore:Q", format=",.2f"), alt.value("")))
-        rule = base.mark_rule(color="#9aa0d0").encode(x=xenc).transform_filter(nearest)
+        rule = base.mark_rule(color="#475569").encode(x=xenc).transform_filter(nearest)
         achart = alt.layer(line, selectors, pts, rule, text).properties(height=300).configure_view(strokeOpacity=0)
         st.altair_chart(achart, use_container_width=True)
         _fonte = "CoinGecko (fallback Yahoo Finance)" if ns == "cry" else "Yahoo Finance"
@@ -924,30 +1089,19 @@ def render_dashboard(ds, doc, ns):
 
         # ------------------------------------------------------------------ spunti
         st.subheader("💡 Spunti di portafoglio", anchor=False)
-        st.caption("Spunti automatici basati sui tuoi target e sullo **storico completo dei titoli** (1 mese, 3, 6, 1 anno e "
+        st.caption("Spunti automatici basati sulle tue posizioni e sullo **storico completo dei titoli** (1 mese, 3, 6, 1 anno e "
                    "intero storico disponibile), non solo sul tuo breve periodo di possesso. Ispirati a metodi di gestione del "
                    "portafoglio e del rischio. **Non sono consigli finanziari**: sono osservazioni oggettive per ragionare.")
 
         tot = totals["now"] or 1
         advice = []
-        devs = sorted(((n, cat_now[n] / tot * 100 - cat_target.get(n, 0)) for n in cat_now), key=lambda x: x[1])
-        if devs and devs[0][1] <= -3:
-            n = devs[0][0]
-            advice.append(("🎯", "blue", f"Sotto target: {n}",
-                           f"Pesa il {num1(cat_now[n]/tot*100)}% contro un target del {cat_target.get(n, 0)}%. "
-                           "È la categoria più sotto i tuoi obiettivi: possibile candidata per il prossimo versamento."))
-        if devs and devs[-1][1] >= 3:
-            n = devs[-1][0]
-            advice.append(("⚖️", "gold", f"Sopra target: {n}",
-                           f"Pesa il {num1(cat_now[n]/tot*100)}% contro un target del {cat_target.get(n, 0)}%. "
-                           "Aggiungere altro qui ti allontanerebbe dall'equilibrio che hai scelto per le categorie."))
         if rows:
             mr = max(rows, key=lambda r: r["valore"])
             w = mr["valore"] / tot * 100
-            mr_tgt = cat_target.get(mr["Categoria"], 0)
-            if w >= 30 and w > mr_tgt:
+            # un ETF globale diversifica da solo: la concentrazione conta sui titoli singoli
+            if w >= 30 and mr["Categoria"] != "Core ETF":
                 advice.append(("⚠️", "red", f"Concentrazione: {mr['Titolo']}",
-                               f"Da solo pesa il {num1(w)}% del portafoglio, più del target della sua categoria ({mr_tgt}%): "
+                               f"Da solo pesa il {num1(w)}% del portafoglio: "
                                "una posizione così grande amplifica gli effetti, in bene e in male, di un singolo titolo."))
             ps = sorted(rows, key=lambda r: r["var"])
             if ps[0]["var"] <= -3:
@@ -1051,10 +1205,10 @@ def render_dashboard(ds, doc, ns):
                                f"Debole sull'anno ({pct(valid[hid]['m12'])}) ma in rialzo nell'ultimo mese "
                                f"({pct(valid[hid]['m1'])}): primo segnale di inversione, da confermare."))
 
-        tone_col = {"green": GREEN, "red": RED, "blue": "#6c8cff", "gold": GOLD}
+        tone_col = {"green": GREEN, "red": RED, "blue": "#2446c8", "gold": GOLD}
         cards = ""
         for icon, tone, title, text in advice:
-            c = tone_col.get(tone, "#6c8cff")
+            c = tone_col.get(tone, "#2446c8")
             cards += (f"<div class='advcard' style='border-left:4px solid {c}'>"
                       f"<div class='advt'>{icon} {title}</div><div class='advx'>{text}</div></div>")
         st.markdown(f"<div class='advgrid'>{cards}</div>", unsafe_allow_html=True)
@@ -1084,11 +1238,11 @@ def _render_temi(temi):
         for n in t["notizie"]:
             meta = " · ".join(x for x in (n["fonte"], n["data"]) if x)
             cards += (
-                "<div class='advcard' style='border-left:4px solid #6c8cff'>"
+                "<div class='advcard' style='border-left:4px solid #2446c8'>"
                 f"<div class='advt'><a href='{n['link']}' target='_blank' "
-                f"style='color:#e8ebff;text-decoration:none'>{n['titolo']}</a></div>"
+                f"style='color:#0f172a;text-decoration:none'>{n['titolo']}</a></div>"
                 f"<div class='advx'>{meta}<br>"
-                f"<a href='{n['link']}' target='_blank' style='color:#6c8cff'>↗ leggi la notizia</a>"
+                f"<a href='{n['link']}' target='_blank' style='color:#2446c8'>↗ leggi la notizia</a>"
                 "</div></div>")
         st.markdown(f"<div class='advgrid'>{cards}</div>", unsafe_allow_html=True)
         st.write("")
@@ -1189,15 +1343,16 @@ def render_overview(doc):
                         prices.update_prices_in_data(doc["crypto"], log=lambda *_: None)
                     save_data(doc)
                     refresh()
-                    st.success("Prezzi aggiornati!")
-                    st.rerun()
+                    done("Prezzi aggiornati!")
                 except Exception as e:
                     st.error(f"Aggiornamento non riuscito: {e}")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Investito totale", eur(init))
-    c2.metric("Valore attuale", eur(now))
-    c3.metric("Guadagno / Perdita", eur(pl), pct(plpct))
-    c4.metric("Posizioni totali", len(rows_s) + len(rows_c))
+    c1.metric("Valore di partenza", eur(tot_s["iniz"] + tot_c["iniz"]),
+              help="Azioni al 29/05 e crypto al 26/06, ai prezzi di quei giorni.")
+    c2.metric("Versato dopo", eur(tot_s["add"] + tot_c["add"]))
+    c3.metric("Valore attuale", eur(now))
+    c4.metric("Guadagno / Perdita", eur(pl), pct(plpct),
+              help="Valore attuale meno (valore di partenza + versato dopo).")
     st.divider()
 
     # --- split Azioni vs Crypto ---
@@ -1206,38 +1361,40 @@ def render_overview(doc):
     wc = 100 - ws if now else 0
     st.markdown(
         "<div style='display:flex;height:22px;border-radius:999px;overflow:hidden;margin:6px 0'>"
-        f"<div style='width:{ws:.1f}%;background:#6c8cff'></div>"
-        f"<div style='width:{wc:.1f}%;background:#f7931a'></div></div>"
-        f"<div style='font-size:12px;color:#9aa0d0;margin-bottom:8px'>🟦 Azioni {num1(ws)}% &nbsp;·&nbsp; 🟧 Crypto {num1(wc)}%</div>",
+        f"<div style='width:{ws:.1f}%;background:#2446c8'></div>"
+        f"<div style='width:{wc:.1f}%;background:#c76a00'></div></div>"
+        f"<div style='font-size:14.5px;color:#475569;margin-bottom:10px'>🟦 Azioni {num1(ws)}% &nbsp;·&nbsp; 🟧 Crypto {num1(wc)}%</div>",
         unsafe_allow_html=True)
     srows = ""
     for label, tot in [("📈 Azioni", tot_s), ("🪙 Crypto", tot_c)]:
         w = (tot["now"] / now * 100) if now else 0
-        srows += (f"<tr><td>{label}</td><td>{eur(tot['init'])}</td>"
+        srows += (f"<tr><td>{label}</td><td>{eur(tot['iniz'])}</td><td>{eur(tot['add']) if tot['add'] else '–'}</td>"
                   f"<td><b>{eur(tot['now'])}</b></td><td>{num1(w)}%</td>"
                   f"<td>{vspan(tot['plpct'])}</td></tr>")
-    srows += (f"<tr class='tot'><td>TOTALE</td><td>{eur(init)}</td><td>{eur(now)}</td>"
+    srows += (f"<tr class='tot'><td>TOTALE</td><td>{eur(tot_s['iniz'] + tot_c['iniz'])}</td>"
+              f"<td>{eur(tot_s['add'] + tot_c['add'])}</td><td>{eur(now)}</td>"
               f"<td>100%</td><td>{vspan(plpct)}</td></tr>")
     st.markdown(
-        "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Classe</th><th>Investito</th>"
-        "<th>Valore attuale</th><th>Peso</th><th>Variazione<br><span style='font-weight:400;text-transform:none;font-size:10px'>oggi vs valore investito iniziale</span></th></tr></thead>"
+        "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Classe</th><th>Valore di partenza</th><th>Versato dopo</th>"
+        "<th>Valore attuale</th><th>Peso</th><th>Variazione<br><span style='font-weight:400;text-transform:none;font-size:11.5px;color:#64748b'>su partenza + versato</span></th></tr></thead>"
         f"<tbody>{srows}</tbody></table></div>", unsafe_allow_html=True)
     st.divider()
 
     # --- tutte le posizioni ---
     st.subheader("🧾 Tutte le posizioni")
-    allr = [(r, "Azioni", "#6c8cff") for r in rows_s] + [(r, "Crypto", "#f7931a") for r in rows_c]
+    allr = [(r, "Azioni", "#2446c8") for r in rows_s] + [(r, "Crypto", "#c76a00") for r in rows_c]
     allr.sort(key=lambda x: -x[0]["valore"])
     body = ""
     for r, cls, col in allr:
         w = (r["valore"] / now * 100) if now else 0
         pill = f"<span class='pill' style='background:{col}22;color:{col}'>{cls}</span>"
         body += (f"<tr><td>{r['Titolo']}</td><td style='text-align:left'>{pill}</td>"
-                 f"<td>{eur(r['investito'])}</td><td><b>{eur(r['valore'])}</b></td>"
+                 f"<td>{qtyfmt(r['qty_tot'])}</td><td>{eur(r['iniziale'])}</td>"
+                 f"<td>{eur(r['aggiunte']) if r['aggiunte'] else '–'}</td><td><b>{eur(r['valore'])}</b></td>"
                  f"<td>{num1(w)}%</td><td>{vspan(r['var'])}</td></tr>")
     st.markdown(
         "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th><th>Classe</th>"
-        "<th>Investito</th><th>Valore attuale</th><th>Peso</th><th>Variazione<br><span style='font-weight:400;text-transform:none;font-size:10px'>oggi vs valore investito iniziale</span></th></tr></thead>"
+        "<th>Quantità</th><th>Valore di partenza</th><th>Versato dopo</th><th>Valore attuale</th><th>Peso</th><th>Variazione<br><span style='font-weight:400;text-transform:none;font-size:11.5px;color:#64748b'>su partenza + versato</span></th></tr></thead>"
         f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
     st.divider()
 
@@ -1270,12 +1427,12 @@ def render_overview(doc):
         hi = max(5000, -(-int(vmax) // 1000) * 1000)
         ticks = list(range(0, hi + 1000, 1000))
         chart = (alt.Chart(hpts)
-                 .mark_line(point=alt.OverlayMarkDef(color="#34d399", size=55), color="#34d399", strokeWidth=2.5)
+                 .mark_line(point=alt.OverlayMarkDef(color="#0f7a3d", size=55), color="#0f7a3d", strokeWidth=2.5)
                  .encode(
                      x=alt.X("data:T", sort="ascending", title=None,
-                             axis=alt.Axis(format="%d/%m", labelColor="#9aa0d0", grid=False)),
+                             axis=alt.Axis(format="%d/%m", labelColor="#475569", grid=False)),
                      y=alt.Y("valore:Q", title="€", scale=alt.Scale(domain=[0, hi]),
-                             axis=alt.Axis(values=ticks, labelColor="#9aa0d0", titleColor="#9aa0d0", gridColor="#2b3168")),
+                             axis=alt.Axis(values=ticks, labelColor="#475569", titleColor="#475569", gridColor="#e3e6ef")),
                      tooltip=[alt.Tooltip("data:T", title="Data", format="%d/%m/%Y"),
                               alt.Tooltip("valore:Q", title="Totale €", format=",.0f")])
                  .properties(height=300).configure_view(strokeOpacity=0))
