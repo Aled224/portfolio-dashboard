@@ -2,6 +2,11 @@
 # serve la cartella static/ (dentro c'e' il font Inter, cosi' non dipende da Google)
 enableStaticServing = true
 
+[client]
+# niente dettagli tecnici a schermo se qualcosa va storto, niente menu sviluppatore
+showErrorDetails = "type"
+toolbarMode = "viewer"
+
 [theme]
 base = "light"
 primaryColor = "#2446c8"

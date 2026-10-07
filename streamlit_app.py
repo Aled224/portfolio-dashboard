@@ -7,6 +7,8 @@ In questo file NON c'e' nessun dato personale: solo il programma generico.
 """
 import datetime
 import hmac
+import html
+import time
 import os
 
 import altair as alt
@@ -36,7 +38,7 @@ def show_flash():
     msg = st.session_state.pop("flash", None)
     if msg:
         st.toast(f"✅ {msg}")
-        st.markdown(f"<div class='flash'><span class='fic'>✓</span><div><b>Fatto.</b> {msg}</div></div>",
+        st.markdown(f"<div class='flash'><span class='fic'>✓</span><div><b>Fatto.</b> {html.escape(msg)}</div></div>",
                     unsafe_allow_html=True)
 
 
@@ -111,8 +113,12 @@ def check_password():
                  "L'app resta chiusa finche' non viene impostato nei Secrets di Streamlit.")
         st.stop()
 
+    ora = time.time()
     if st.session_state.get("authed"):
-        return True
+        # l'accesso scade dopo 12 ore (es. telefono rimasto con l'app aperta)
+        if ora - st.session_state.get("authed_at", 0) < 12 * 3600:
+            return True
+        st.session_state.pop("authed", None)
 
     # --- schermata d'accesso: una scheda al centro, un campo, un bottone
     st.markdown("""
@@ -140,11 +146,24 @@ def check_password():
     with st.form("login", border=True):
         digitata = st.text_input("Password", type="password", placeholder="Scrivi la password")
         entra = st.form_submit_button("Entra", type="primary", use_container_width=True)
-    if entra:
-        if digitata and hmac.compare_digest(digitata, attesa):
+    bloccato_fino = st.session_state.get("lock_until", 0)
+    if entra and ora < bloccato_fino:
+        st.error(f"Troppi tentativi sbagliati. Riprova tra {int((bloccato_fino - ora) // 60) + 1} minuti.")
+    elif entra:
+        if digitata and hmac.compare_digest(digitata.encode("utf-8"), attesa.encode("utf-8")):
             st.session_state["authed"] = True
+            st.session_state["authed_at"] = ora
+            st.session_state["fails"] = 0
             st.rerun()
-        st.error("Password non corretta. Riprova.")
+        fails = st.session_state.get("fails", 0) + 1
+        st.session_state["fails"] = fails
+        time.sleep(min(1.0 * fails, 5))          # rallenta chi prova password a raffica
+        if fails >= 5:
+            st.session_state["lock_until"] = ora + 600
+            st.session_state["fails"] = 0
+            st.error("Troppi tentativi sbagliati. Accesso bloccato per 10 minuti.")
+        else:
+            st.error("Password non corretta. Riprova.")
     st.markdown("<div class='lg-foot'>🔒 Accesso privato. I dati restano in un archivio protetto.</div>",
                 unsafe_allow_html=True)
     return False
@@ -210,7 +229,7 @@ def compute(data):
         if h.get("dal") and h["dal"] > data.get("base_date", ""):
             addcost += iniz
             iniz = 0.0
-        rows.append({"id": hid, "Titolo": h["nome"], "Categoria": h["cat"],
+        rows.append({"id": hid, "Titolo": html.escape(h["nome"]), "Categoria": html.escape(h["cat"]),
                      "iniziale": iniz, "aggiunte": addcost, "investito": invtot,
                      "qty": q0, "qty_tot": qtot,
                      "valore": valtot, "var": chg, "n_tranche": len(tranches)})
@@ -227,11 +246,6 @@ def compute(data):
 @st.cache_data(ttl=1800, show_spinner=False)
 def asset_hist_cached(sym, ccy, cg_id, source, rng):
     return prices.asset_price_history({"sym": sym, "ccy": ccy, "cg_id": cg_id, "source": source}, rng)
-
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def momentum_cached(sym):
-    return prices.momentum(sym)
 
 
 # --------------------------------------------- aggiunta nuovo titolo / versamenti
@@ -562,18 +576,11 @@ def reduce_holding(data, hid, amount):
 def remove_holding(data, hid):
     """Toglie del tutto una posizione dal piano. Lo storico passato resta com'e':
     e' il registro di quello che c'era davvero in quei giorni."""
-    h = by_id(data.get("holdings", []), hid)
-    cat = h["cat"] if h else None
     data["holdings"] = [x for x in data.get("holdings", []) if x["id"] != hid]
     for key in ("current", "baseline_prices", "pac", "momentum"):
         d = data.get(key)
         if isinstance(d, dict):
             d.pop(hid, None)
-    # se nessun altro titolo usa quella categoria, togli anche il suo target
-    if cat and not any(x["cat"] == cat for x in data["holdings"]):
-        tgt = data.get("cat_target")
-        if isinstance(tgt, dict):
-            tgt.pop(cat, None)
 
 
 def _value_of(data, hid, h):
@@ -731,7 +738,6 @@ CRYPTO_DEFAULT = {
     "baseline_prices": {"sol": 62.40, "wld": 0.405853},
     "current": {"sol": 2856.22, "wld": 167.14},
     "pac": {},
-    "cat_target": {"Layer 1": 95, "AI / Identity": 5},
     "history": [],
     "momentum": {},
 }
@@ -834,7 +840,6 @@ button[data-testid="stBaseButton-secondary"] p{color:var(--ink) !important}
 .autobar{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:12px;
   padding:9px 16px;font-size:15.5px;color:var(--ink2);margin:2px 0 8px;line-height:1.45}
 .autobar b{color:var(--ink)}
-.catbar{display:grid;grid-template-columns:150px 1fr 120px;gap:12px;align-items:center;margin:9px 0}
 
 /* titoli di sezione */
 .sec{font-size:22px;font-weight:800;color:var(--ink);letter-spacing:-.3px;margin:6px 0 12px}
@@ -921,7 +926,6 @@ button[data-testid="stBaseButton-secondary"] p{color:var(--ink) !important}
     box-shadow:2px 0 0 var(--line);max-width:150px;white-space:normal}
   .ptbl tbody tr:nth-child(even) td:first-child{background:#fafbfd}
   .ptbl th:first-child{background:var(--soft)}
-  .hm{display:none}
   .dtbl{display:none}
   .mcards{display:block}
   .hero{padding:18px 16px 14px;border-radius:16px}
@@ -1230,7 +1234,7 @@ def render_dashboard(ds, doc, ns):
         # spunti avanzati: visione completa (1m/3m/6m/1a + intero storico),
         # calcolati e salvati a ogni aggiornamento dei dati (niente download in diretta)
         moms = data.get("momentum", {})
-        name_of = {h["id"]: h["nome"] for h in holdings}
+        name_of = {h["id"]: html.escape(h["nome"]) for h in holdings}
         valid = {hid: m for hid, m in moms.items() if m and m.get("m12") is not None}
 
 
@@ -1345,13 +1349,15 @@ def _render_temi(temi):
         st.markdown(f"**{t['emoji']} {t['etichetta']}**")
         cards = ""
         for n in t["notizie"]:
-            meta = " · ".join(x for x in (n["fonte"], n["data"]) if x)
+            meta = html.escape(" · ".join(x for x in (n["fonte"], n["data"]) if x))
+            link = str(n.get("link") or "")
+            link = html.escape(link, quote=True) if link.startswith(("https://", "http://")) else "#"
             cards += (
                 "<div class='advcard' style='border-left:4px solid #2446c8'>"
-                f"<div class='advt'><a href='{n['link']}' target='_blank' "
-                f"style='color:#0f172a;text-decoration:none'>{n['titolo']}</a></div>"
+                f"<div class='advt'><a href='{link}' target='_blank' rel='noopener noreferrer' "
+                f"style='color:#0f172a;text-decoration:none'>{html.escape(n['titolo'])}</a></div>"
                 f"<div class='advx'>{meta}<br>"
-                f"<a href='{n['link']}' target='_blank' style='color:#2446c8'>↗ leggi la notizia</a>"
+                f"<a href='{link}' target='_blank' rel='noopener noreferrer' style='color:#2446c8'>↗ leggi la notizia</a>"
                 "</div></div>")
         st.markdown(f"<div class='advgrid'>{cards}</div>", unsafe_allow_html=True)
         st.write("")
