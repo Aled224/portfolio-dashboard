@@ -9,6 +9,16 @@ import datetime
 import json
 import urllib.parse
 import urllib.request
+import ssl
+
+# Certificati da certifi (sempre aggiornati) invece che dal sistema: il 04/10/2026
+# CoinGecko e' passato alla nuova catena Let's Encrypt e l'elenco di Windows la dava
+# per "scaduta". certifi arriva con requests, che e' gia' nelle dipendenze.
+try:
+    import certifi
+    _SSL = ssl.create_default_context(cafile=certifi.where())
+except Exception:
+    _SSL = ssl.create_default_context()
 
 
 def search_yahoo(q):
@@ -17,7 +27,7 @@ def search_yahoo(q):
     url = ("https://query1.finance.yahoo.com/v1/finance/search?q="
            + urllib.parse.quote(q) + "&quotesCount=12&newsCount=0")
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    d = json.loads(urllib.request.urlopen(req, timeout=20).read())
+    d = json.loads(urllib.request.urlopen(req, timeout=20, context=_SSL).read())
     out = []
     for qo in d.get("quotes", []):
         sym = qo.get("symbol")
@@ -34,7 +44,7 @@ def search_coingecko(q):
     """Cerca crypto su CoinGecko. Ritorna suggerimenti {nome, sym, source, cg_id, label}."""
     url = "https://api.coingecko.com/api/v3/search?query=" + urllib.parse.quote(q)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    d = json.loads(urllib.request.urlopen(req, timeout=20).read())
+    d = json.loads(urllib.request.urlopen(req, timeout=20, context=_SSL).read())
     out = []
     for c in d.get("coins", [])[:15]:
         cid = c.get("id")
@@ -51,7 +61,7 @@ def search_coingecko(q):
 def yahoo(sym, rng="3mo"):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range={rng}&interval=1d"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    d = json.loads(urllib.request.urlopen(req, timeout=25).read())
+    d = json.loads(urllib.request.urlopen(req, timeout=25, context=_SSL).read())
     r = d["chart"]["result"][0]
     cur = r["meta"].get("currency")
     now = r["meta"].get("regularMarketPrice")
@@ -84,7 +94,7 @@ def coingecko_chart(cg_id, days="max"):
     url = (f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart"
            f"?vs_currency=eur&days={days}")
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    d = json.loads(urllib.request.urlopen(req, timeout=25).read())
+    d = json.loads(urllib.request.urlopen(req, timeout=25, context=_SSL).read())
     arr = d.get("prices", []) or []
     closes = {}
     for ms, p in arr:
