@@ -9,6 +9,7 @@ il meccanismo di lettura/scrittura.
 import base64
 import json
 import os
+import time
 
 import requests
 import streamlit as st
@@ -56,20 +57,28 @@ def save_data(data):
     if not (token and repo):
         raise RuntimeError("Configurazione mancante: imposta github_token e github_repo nei Secrets.")
     base = f"https://api.github.com/repos/{repo}/contents/{path}"
-    g = requests.get(base + f"?ref={branch}", headers=_headers(token), timeout=20)
-    sha = g.json().get("sha") if g.ok else None
-    payload = {
-        "message": "Aggiorna dati dall'app",
-        "content": base64.b64encode(
-            json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
-        ).decode("ascii"),
-        "branch": branch,
-    }
-    if sha:
-        payload["sha"] = sha
-    p = requests.put(base, headers=_headers(token), json=payload, timeout=20)
+    content = base64.b64encode(
+        json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
+    ).decode("ascii")
+    # GitHub ogni tanto risponde 500/502/503 per qualche minuto (successo il 07/10/2026),
+    # oppure 409 se il file e' cambiato nel frattempo: riprovo da solo, rileggendo lo sha.
+    for tentativo in range(4):
+        g = requests.get(base + f"?ref={branch}", headers=_headers(token), timeout=20)
+        sha = g.json().get("sha") if g.ok else None
+        payload = {"message": "Aggiorna dati dall'app", "content": content, "branch": branch}
+        if sha:
+            payload["sha"] = sha
+        p = requests.put(base, headers=_headers(token), json=payload, timeout=20)
+        if p.ok:
+            load_data.clear()
+            return
+        if p.status_code not in (409, 500, 502, 503, 504) or tentativo == 3:
+            break
+        time.sleep(2 + 3 * tentativo)
+    if p.status_code >= 500:
+        raise RuntimeError("GitHub, dove sono salvati i dati, in questo momento non risponde. "
+                           "Non è stato salvato niente: riprova tra qualche minuto.")
     p.raise_for_status()
-    load_data.clear()
 
 
 def refresh():
