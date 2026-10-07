@@ -382,12 +382,12 @@ def _render_add_existing(data, doc, holdings, ns, unit):
     mc[1].metric("Valgono oggi", eur(valtot))
 
     PER_NUM = f"Ti dico quante {unit} ho comprato"
-    PER_EUR = "Ti dico quanti soldi ho investito"
+    PER_EUR = "Ti dico quanti soldi in più ho investito"
     PER_VAL = "Ti dico quanto vale ora tutto quello che ho"
     how = st.radio("Come preferisci", [PER_NUM, PER_EUR, PER_VAL], key=f"{ns}_ex_how_{sel}")
     una = "azione" if unit == "azioni" else "moneta"
     if how == PER_EUR:
-        spent = st.number_input("Quanti soldi hai investito (€)", min_value=0.0, step=10.0, value=0.0,
+        spent = st.number_input("Quanti soldi in più hai investito (€)", min_value=0.0, step=10.0, value=0.0,
                                 key=f"{ns}_ex_inv_{sel}")
         qty = (spent / price) if price else 0.0
         if qty > 0:
