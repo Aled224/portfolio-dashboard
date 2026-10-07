@@ -1,11 +1,22 @@
+[server]
+# serve la cartella static/ (dentro c'e' il font Inter, cosi' non dipende da Google)
+enableStaticServing = true
+
 [theme]
 base = "light"
 primaryColor = "#2446c8"
 backgroundColor = "#eef1f6"
 secondaryBackgroundColor = "#f6f8fb"
 textColor = "#0f172a"
-font = "sans serif"
+font = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+headingFont = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
 baseFontSize = 18
 baseRadius = "10px"
 borderColor = "#cfd6e3"
 showWidgetBorder = true
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/Inter-latin.woff2"
+weight = "400 800"
+style = "normal"

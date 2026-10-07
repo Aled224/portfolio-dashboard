@@ -111,19 +111,42 @@ def check_password():
                  "L'app resta chiusa finche' non viene impostato nei Secrets di Streamlit.")
         st.stop()
 
-    def _entered():
-        digitata = st.session_state.get("pwd_input", "")
-        st.session_state["authed"] = bool(digitata) and hmac.compare_digest(digitata, attesa)
-        st.session_state["bad_pwd"] = not st.session_state["authed"]
-        st.session_state.pop("pwd_input", None)
-
     if st.session_state.get("authed"):
         return True
-    st.title("📊 Portafoglio")
-    st.write("Accesso privato. Inserisci la password per continuare.")
-    st.text_input("Password", type="password", key="pwd_input", on_change=_entered)
-    if st.session_state.get("bad_pwd"):
-        st.error("Password errata. Riprova.")
+
+    # --- schermata d'accesso: una scheda al centro, un campo, un bottone
+    st.markdown("""
+<style>
+[data-testid="stHeader"]{background:transparent}
+.block-container{max-width:480px !important;padding:9vh 1.25rem 3rem !important}
+.lg-logo{width:64px;height:64px;border-radius:18px;margin:0 auto 18px;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#1d3bb3,#3a5bd9);box-shadow:0 10px 24px rgba(36,70,200,.30)}
+.lg-title{text-align:center;font-size:32px !important;line-height:1.15;font-weight:800;letter-spacing:-.6px;color:#0f172a;margin:0}
+.lg-sub{text-align:center;font-size:18px !important;color:#475569;margin:6px 0 26px}
+[data-testid="stForm"]{background:#fff;border:1px solid #d5dbe6 !important;border-radius:18px;padding:26px 24px 22px;
+  box-shadow:0 1px 2px rgba(15,23,42,.05),0 12px 32px rgba(15,23,42,.08)}
+[data-testid="stForm"] input{font-size:18px !important;height:50px}
+[data-testid="stForm"] [data-testid="stWidgetLabel"] p{font-size:16px;font-weight:600;color:#334155}
+[data-testid="stForm"] button{min-height:52px;font-size:18px !important;font-weight:700}
+[data-testid="stForm"] button p{color:#fff !important;font-size:18px !important;font-weight:700}
+.lg-foot{text-align:center;font-size:15px !important;color:#64748b;margin-top:18px;line-height:1.5}
+@media (max-width:640px){.block-container{padding:6vh 1rem 2rem !important}.lg-title{font-size:28px !important}}
+</style>
+<div class="lg-logo"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4"
+ stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg></div>
+<div class="lg-title">Il mio portafoglio</div>
+<div class="lg-sub">Azioni e crypto, a colpo d'occhio.</div>
+""", unsafe_allow_html=True)
+    with st.form("login", border=True):
+        digitata = st.text_input("Password", type="password", placeholder="Scrivi la password")
+        entra = st.form_submit_button("Entra", type="primary", use_container_width=True)
+    if entra:
+        if digitata and hmac.compare_digest(digitata, attesa):
+            st.session_state["authed"] = True
+            st.rerun()
+        st.error("Password non corretta. Riprova.")
+    st.markdown("<div class='lg-foot'>🔒 Accesso privato. I dati restano in un archivio protetto.</div>",
+                unsafe_allow_html=True)
     return False
 
 
@@ -266,50 +289,80 @@ def search_assets_cached(q, is_crypto):
     return prices.search_coingecko(q) if is_crypto else prices.search_yahoo(q)
 
 
-def render_pac(data, doc, holdings, ns):
-    """Registra un versamento (piano d'accumulo) + elenco dei versamenti. Usato da entrambe le tab."""
-    st.subheader("➕ Registra un versamento (piano d'accumulo)")
-    with st.form(f"{ns}_add_pac", clear_on_submit=True):
-        fc = st.columns([3, 2, 2])
-        sel = fc[0].selectbox("Titolo", options=[h["id"] for h in holdings],
-                              format_func=lambda i: by_id(holdings, i)["nome"], key=f"{ns}_pac_sel")
-        amount = fc[1].number_input("Importo (€)", min_value=0.0, step=10.0, value=0.0, key=f"{ns}_pac_amt")
-        fc[2].write("")
-        fc[2].write("")
-        if fc[2].form_submit_button("Conferma versamento", use_container_width=True):
-            if amount and amount > 0:
-                h = add_tranche(data, sel, amount)
-                try:
-                    save_data(doc)
-                    done(f"Aggiunto + {eur(amount)} su {h['nome']}.")
-                except Exception as e:
-                    st.error(f"Errore nel salvataggio: {e}")
-            else:
-                st.warning("Inserisci un importo maggiore di zero.")
+def hero_html(title, tot, parts_note):
+    """Riquadro principale: quanto vale tutto, quanto ho guadagnato, da dove arriva."""
+    pl, plpct = tot["pl"], tot["plpct"]
+    cls, arrow = ("pos", "▲") if pl >= 0 else ("neg", "▼")
+    return (
+        "<div class='hero'>"
+        f"<div class='h-lab'>{title}</div>"
+        f"<div class='h-val'>{eur(tot['now'])}</div>"
+        f"<div class='h-chg {cls}'>{arrow} {eur(abs(pl))} <span>{pct(plpct)}</span></div>"
+        "<div class='h-grid'>"
+        f"<div><span>Valore di partenza</span><b>{eur(tot['iniz'])}</b><small>{parts_note}</small></div>"
+        f"<div><span>Versato dopo</span><b>{eur(tot['add'])}</b><small>acquisti successivi</small></div>"
+        f"<div><span>Totale messo</span><b>{eur(tot['init'])}</b><small>partenza + versato</small></div>"
+        "</div></div>")
 
+
+def pcard(name, dot, value, var, line2, tag=""):
+    """Una posizione come scheda: si legge sul telefono senza scorrere di lato."""
+    cls = "pos" if var >= 0 else "neg"
+    return (
+        "<div class='pcard'>"
+        f"<div class='pc-top'><span class='pc-dot' style='background:{dot}'></span>"
+        f"<span class='pc-name'>{name}{tag}</span><span class='pc-val'>{eur(value)}</span></div>"
+        f"<div class='pc-bot'><span>{line2}</span><span class='chg {cls}'>{pct(var)}</span></div>"
+        "</div>")
+
+
+def price_bar(last_update, key, on_refresh, info=""):
+    """Riga sotto il riquadro principale: data dei prezzi + bottone Aggiorna."""
+    c = st.columns([3, 1.3])
+    nm = next_monday(last_update)
+    c[0].markdown(
+        f"<div class='autobar'>🕒 Prezzi al <b>{itdate(last_update)}</b>"
+        + (f" · prossimo aggiornamento automatico <b>{itdate(nm)}</b>" if nm else "")
+        + (f"<br>{info}" if info else "") + "</div>", unsafe_allow_html=True)
+    if c[1].button("🔄 Aggiorna prezzi", key=key, use_container_width=True, type="primary",
+                   help="Scarica subito i prezzi di mercato"):
+        with st.spinner("Scarico i prezzi di mercato..."):
+            try:
+                on_refresh()
+                refresh()
+                done("Prezzi aggiornati.")
+            except Exception as e:
+                st.error(f"Aggiornamento non riuscito: {e}")
+
+
+def render_history_list(data, doc, holdings, ns, unit):
+    """Elenco degli acquisti fatti dopo la partenza, con possibilita' di toglierne uno."""
     tranches_all = []
     for h in holdings:
         for i, t in enumerate(data.get("pac", {}).get(h["id"], []) or []):
             tranches_all.append((h, i, t))
-    if tranches_all:
-        with st.expander(f"📋 Versamenti registrati ({len(tranches_all)})"):
-            for h, i, t in sorted(tranches_all, key=lambda x: x[2].get("ts", 0), reverse=True):
-                lc = st.columns([6, 1])
-                lc[0].write(f"📅 {itdate(t.get('d'))} · **{h['nome']}** · + {eur(t.get('a', 0))}")
-                if lc[1].button("Rimuovi", key=f"{ns}_rm_{h['id']}_{i}", use_container_width=True):
-                    lst = data["pac"].get(h["id"], [])
-                    if 0 <= i < len(lst):
-                        lst.pop(i)
-                        if lst:
-                            data["pac"][h["id"]] = lst
-                        else:
-                            data["pac"].pop(h["id"], None)
-                        try:
-                            save_data(doc)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Errore: {e}")
-    st.divider()
+    if not tranches_all:
+        return
+    with st.expander(f"📋 Acquisti registrati dopo la partenza ({len(tranches_all)})"):
+        st.caption("Se ne hai registrato uno per sbaglio, toglilo da qui.")
+        for h, i, t in sorted(tranches_all, key=lambda x: x[2].get("ts", 0), reverse=True):
+            lc = st.columns([5, 1.3])
+            q = tranche_qty(data, h, t)
+            lc[0].markdown(f"**{h['nome']}** · {itdate(t.get('d'))}  \n"
+                           f"{qtyfmt(q)} {unit} · {eur2(float(t.get('a', 0)))}")
+            if lc[1].button("Togli", key=f"{ns}_rm_{h['id']}_{i}", use_container_width=True):
+                lst = data["pac"].get(h["id"], [])
+                if 0 <= i < len(lst):
+                    lst.pop(i)
+                    if lst:
+                        data["pac"][h["id"]] = lst
+                    else:
+                        data["pac"].pop(h["id"], None)
+                    try:
+                        save_data(doc)
+                        done(f"Tolto l'acquisto del {itdate(t.get('d'))} su {h['nome']}.")
+                    except Exception as e:
+                        st.error(f"Errore: {e}")
 
 
 def _render_add_existing(data, doc, holdings, ns, unit):
@@ -329,25 +382,34 @@ def _render_add_existing(data, doc, holdings, ns, unit):
     mc[1].metric("Valgono oggi", eur(valtot))
 
     PER_NUM = f"Ti dico quante {unit} ho comprato"
+    PER_EUR = "Ti dico quanti soldi ho investito"
     PER_VAL = "Ti dico quanto vale ora tutto quello che ho"
-    how = st.radio("Come preferisci", [PER_NUM, PER_VAL], key=f"{ns}_ex_how_{sel}")
-    if how == PER_NUM:
-        qty = st.number_input(f"Quante {unit} hai comprato", min_value=0.0, step=1.0, value=0.0,
-                              format=fmt, key=f"{ns}_ex_qty_{sel}")
-    else:
-        tot_now = st.number_input("Quanto vale ora tutto quello che hai (€)", min_value=0.0, step=10.0,
-                                  value=float(round(valtot, 2)), key=f"{ns}_ex_tot_{sel}",
-                                  help="Lo trovi nell'app della banca o del broker. Calcolo io quante "
-                                       f"{unit} hai aggiunto, al prezzo dell'ultimo aggiornamento.")
-        qty = max(0.0, (tot_now / price) - qtot) if price else 0.0
+    how = st.radio("Come preferisci", [PER_NUM, PER_EUR, PER_VAL], key=f"{ns}_ex_how_{sel}")
+    una = "azione" if unit == "azioni" else "moneta"
+    if how == PER_EUR:
+        spent = st.number_input("Quanti soldi hai investito (€)", min_value=0.0, step=10.0, value=0.0,
+                                key=f"{ns}_ex_inv_{sel}")
+        qty = (spent / price) if price else 0.0
         if qty > 0:
-            st.caption(f"Quindi ora hai {qtyfmt(qtot + qty)} {unit}: ne hai aggiunte {qtyfmt(qty)}.")
-    spent = st.number_input("Quanto hai speso (€)", min_value=0.0, step=10.0,
-                            value=float(round(qty * price, 2)),
-                            key=f"{ns}_ex_eur_{sel}_{int(round(qty * 1e6))}",
-                            help=f"Te lo propongo al prezzo dell'ultimo aggiornamento ({eur2(price)} "
-                                 f"per {'azione' if unit == 'azioni' else 'moneta'}). "
-                                 "Correggilo con quanto hai pagato davvero.")
+            st.caption(f"Al prezzo dell'ultimo aggiornamento ({eur2(price)} per {una}) "
+                       f"sono {qtyfmt(qty)} {unit}.")
+    else:
+        if how == PER_NUM:
+            qty = st.number_input(f"Quante {unit} hai comprato", min_value=0.0, step=1.0, value=0.0,
+                                  format=fmt, key=f"{ns}_ex_qty_{sel}")
+        else:
+            tot_now = st.number_input("Quanto vale ora tutto quello che hai (€)", min_value=0.0, step=10.0,
+                                      value=float(round(valtot, 2)), key=f"{ns}_ex_tot_{sel}",
+                                      help="Lo trovi nell'app della banca o del broker. Calcolo io quante "
+                                           f"{unit} hai aggiunto, al prezzo dell'ultimo aggiornamento.")
+            qty = max(0.0, (tot_now / price) - qtot) if price else 0.0
+            if qty > 0:
+                st.caption(f"Quindi ora hai {qtyfmt(qtot + qty)} {unit}: ne hai aggiunte {qtyfmt(qty)}.")
+        spent = st.number_input("Quanto hai speso (€)", min_value=0.0, step=10.0,
+                                value=float(round(qty * price, 2)),
+                                key=f"{ns}_ex_eur_{sel}_{how[:8]}_{int(round(qty * 1e6))}",
+                                help=f"Te lo propongo al prezzo dell'ultimo aggiornamento ({eur2(price)} "
+                                     f"per {una}). Correggilo con quanto hai pagato davvero.")
     if st.button(f"Aggiungi {unit}", key=f"{ns}_ex_btn", type="primary", use_container_width=True):
         if qty <= 0 or spent <= 0:
             st.warning(f"Non risultano {unit} da aggiungere: controlla i numeri.")
@@ -361,23 +423,28 @@ def _render_add_existing(data, doc, holdings, ns, unit):
 
 
 def render_manage(data, doc, holdings, ns):
-    """Un solo pannello, tre scelte: aggiungi a una posizione che hai, aggiungi
-    una posizione nuova, riduci/sposta/rimuovi. Usato da entrambe le tab."""
+    """Tutte le modifiche in un posto: aggiungi a una posizione che hai, aggiungi una
+    posizione nuova, togli/sposta. Scelta a pulsanti grandi, comodi anche col pollice."""
     is_crypto = (ns == "cry")
     unit = "monete" if is_crypto else "azioni"
-    ESIST = "➕ Aggiungi a una crypto che ho già" if is_crypto else "➕ Aggiungi a un titolo che ho già"
-    NUOVO = "🆕 Aggiungi una nuova crypto" if is_crypto else "🆕 Aggiungi un nuovo titolo"
-    RIDUCI = "✏️ Riduci, sposta o rimuovi"
-    with st.expander(f"✏️ Modifica le tue {unit}"):
-        opts = [ESIST, NUOVO, RIDUCI] if holdings else [NUOVO]
-        mode = st.radio("Cosa vuoi fare", opts, key=f"{ns}_manage_mode")
-        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-        if mode == ESIST:
-            _render_add_existing(data, doc, holdings, ns, unit)
-        elif mode == NUOVO:
-            render_add_asset(data, doc, holdings, ns)
-        else:
-            render_edit_asset(data, doc, holdings, ns)
+    ESIST = "➕ Aggiungi a crypto che ho già" if is_crypto else "➕ Aggiungi a titolo che ho già"
+    NUOVO = "🆕 Nuova crypto" if is_crypto else "🆕 Nuovo titolo"
+    RIDUCI = "➖ Togli o sposta"
+    st.markdown(f"<div class='sec'>✏️ Hai comprato o venduto?</div>", unsafe_allow_html=True)
+    opts = [ESIST, NUOVO, RIDUCI] if holdings else [NUOVO]
+    mode = st.segmented_control("Cosa vuoi fare", opts, key=f"{ns}_manage_mode",
+                                label_visibility="collapsed")
+    if mode is None:
+        st.caption("Scegli qui sopra cosa vuoi fare.")
+    else:
+        with st.container(border=True):
+            if mode == ESIST:
+                _render_add_existing(data, doc, holdings, ns, unit)
+            elif mode == NUOVO:
+                render_add_asset(data, doc, holdings, ns)
+            else:
+                render_edit_asset(data, doc, holdings, ns)
+    render_history_list(data, doc, holdings, ns, unit)
 
 
 def render_add_asset(data, doc, holdings, ns):
@@ -710,6 +777,9 @@ st.markdown("""
    Tema chiaro ad alto contrasto. Scala: testo 18px, tabelle 17px, note 15px.
    Testo #0f172a, secondario #475569 (contrasto AA su bianco e sul fondo).
    ========================================================================= */
+html, body, .stApp, .ptbl, .hero, .pcard, .scard, .autobar, .advcard, .sec, button, input, textarea{
+  font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif !important}
+.stApp{font-feature-settings:"cv11","tnum" 0;-webkit-font-smoothing:antialiased}
 :root{--ink:#0f172a;--ink2:#334155;--mute:#475569;--line:#d5dbe6;--soft:#f6f8fb;--card:#ffffff;--brand:#2446c8}
 .block-container{max-width:1180px;padding-top:2.2rem !important;padding-bottom:4rem !important}
 h1{font-size:2.15rem !important;font-weight:800 !important;letter-spacing:-.5px;color:var(--ink) !important}
@@ -766,6 +836,51 @@ button[data-testid="stBaseButton-secondary"] p{color:var(--ink) !important}
 .autobar b{color:var(--ink)}
 .catbar{display:grid;grid-template-columns:150px 1fr 120px;gap:12px;align-items:center;margin:9px 0}
 
+/* titoli di sezione */
+.sec{font-size:22px;font-weight:800;color:var(--ink);letter-spacing:-.3px;margin:6px 0 12px}
+.thsub{font-weight:500;text-transform:none;font-size:12px;color:#64748b}
+
+/* riquadro principale */
+.hero{background:linear-gradient(135deg,#1d3bb3 0%,#2446c8 55%,#3a5bd9 100%);color:#fff;border-radius:20px;
+  padding:24px 26px 20px;margin:6px 0 12px;box-shadow:0 10px 30px rgba(36,70,200,.25)}
+.h-lab{font-size:16px;font-weight:600;opacity:.9}
+.h-val{font-size:46px;font-weight:800;letter-spacing:-1px;line-height:1.1;margin:4px 0 6px;font-variant-numeric:tabular-nums}
+.h-chg{display:inline-block;font-size:18px;font-weight:800;padding:5px 12px;border-radius:999px;background:rgba(255,255,255,.16)}
+.h-chg.pos{color:#b9f6cf}.h-chg.neg{color:#ffd0d4}
+.h-chg span{font-weight:700;opacity:.95;margin-left:4px}
+.h-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px}
+.h-grid div{background:rgba(255,255,255,.12);border-radius:12px;padding:10px 12px}
+.h-grid span{display:block;font-size:13px;opacity:.85;font-weight:600}
+.h-grid b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.h-grid small{display:block;font-size:12px;opacity:.75}
+
+/* posizioni: tabella su computer, schede su telefono */
+.mcards{display:none}
+.pcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px 15px;margin-bottom:9px;
+  box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.pc-top{display:flex;align-items:center;gap:10px}
+.pc-dot{flex:0 0 10px;height:10px;border-radius:50%}
+.pc-name{flex:1;font-weight:700;font-size:17px;color:var(--ink);line-height:1.25}
+.pc-val{font-weight:800;font-size:18px;font-variant-numeric:tabular-nums}
+.pc-bot{display:flex;justify-content:space-between;align-items:center;margin-top:5px;padding-left:20px;
+  font-size:14.5px;color:var(--mute)}
+.chg{font-weight:800;padding:2px 9px;border-radius:999px;font-size:14px}
+.chg.pos{color:#0f7a3d;background:#e3f4ea}.chg.neg{color:#c42a3a;background:#fbe6e8}
+
+/* azioni vs crypto */
+.splitbar{display:flex;height:14px;border-radius:999px;overflow:hidden;margin:2px 0 12px}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.scard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.s-lab{font-weight:700;color:var(--ink2);display:flex;justify-content:space-between}
+.s-lab span{color:var(--mute);font-weight:700}
+.s-val{font-size:26px;font-weight:800;margin:4px 0;font-variant-numeric:tabular-nums}
+.s-sub{font-size:14.5px;color:var(--mute)}
+
+/* pulsanti di scelta (aggiungi / nuovo / togli) */
+[data-testid="stButtonGroup"] button{min-height:46px;font-size:16px !important;font-weight:700}
+[data-testid="stButtonGroup"] button p{font-size:16px !important;font-weight:700}
+[data-testid="stButtonGroup"] button[kind*="Active"] p{color:var(--brand) !important}
+
 /* conferma dopo ogni operazione */
 .flash{display:flex;gap:12px;align-items:center;background:#e8f6ee;border:1px solid #8fd1a9;border-left:6px solid #0f7a3d;
   border-radius:12px;padding:14px 18px;margin:4px 0 14px;font-size:17px;color:#0f172a;animation:flin .35s ease-out}
@@ -807,6 +922,22 @@ button[data-testid="stBaseButton-secondary"] p{color:var(--ink) !important}
   .ptbl tbody tr:nth-child(even) td:first-child{background:#fafbfd}
   .ptbl th:first-child{background:var(--soft)}
   .hm{display:none}
+  .dtbl{display:none}
+  .mcards{display:block}
+  .hero{padding:18px 16px 14px;border-radius:16px}
+  .h-val{font-size:36px}
+  .h-chg{font-size:16px}
+  .h-grid{grid-template-columns:1fr 1fr 1fr;gap:6px}
+  .h-grid div{padding:8px 8px}
+  .h-grid b{font-size:15.5px}
+  .h-grid span{font-size:11.5px}
+  .h-grid small{display:none}
+  .sec{font-size:19px}
+  .split{gap:8px}
+  .scard{padding:12px}
+  .s-val{font-size:20px}
+  .s-sub{font-size:13px}
+  [data-testid="stButtonGroup"] button{flex:1 1 100%}
   .autobar{font-size:14.5px;padding:9px 12px;white-space:normal}
   .pill{font-size:12.5px;padding:3px 9px}
   .advgrid{grid-template-columns:1fr}
@@ -844,9 +975,10 @@ if _cg_chg:
 
 SCROLL_TBL = """
 <style>
+ @font-face{font-family:"Inter";src:url("/app/static/Inter-latin.woff2") format("woff2");font-weight:400 800}
  *{box-sizing:border-box}
  body{margin:0;background:transparent;color:#0f172a;
-      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+      font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
  .wrap{display:flex;gap:8px;align-items:stretch}
  .box{flex:1;min-width:0;height:__H__px;overflow-y:auto;overflow-x:auto;
       -webkit-overflow-scrolling:touch;border-radius:10px}
@@ -911,81 +1043,58 @@ def render_dashboard(ds, doc, ns):
     rows, totals = compute(data)
     last_update = data.get("last_update", "")
     base_date = data.get("base_date", "2026-05-29")
-    # -------------------------------------------------------------------- intestazione
-    top = st.columns([5, 1.2])
-    with top[0]:
-        nm = next_monday(last_update)
-        st.markdown(
-            f"<div class='autobar'>📅 Partenza: {'monete' if ns == 'cry' else 'azioni'} possedute il <b>{itdate(base_date)}</b> · "
-            f"prezzi al <b>{itdate(last_update)}</b> · aggiornamento automatico ogni lunedì"
-            + (f" · prossimo <b>{itdate(nm)}</b>" if nm else "") + "</div>",
-            unsafe_allow_html=True)
-    with top[1]:
-        st.write("")
-        if st.button("📈 Aggiorna prezzi", key=f"{ns}_refresh", use_container_width=True, type="primary",
-                     help="Scarica subito i prezzi di mercato aggiornati"):
-            with st.spinner("Scarico i prezzi di mercato..."):
-                try:
-                    prices.update_prices_in_data(ds, log=lambda *_: None)
-                    save_data(doc)
-                    refresh()
-                    done("Prezzi aggiornati!")
-                except Exception as e:
-                    st.error(f"Aggiornamento non riuscito: {e}")
-
-    # -------------------------------------------------------------------------- cards
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric(f"Valore di partenza ({itdate(base_date)})", eur(totals["iniz"]),
-              help="Le azioni che avevi quel giorno, al prezzo di quel giorno.")
-    c2.metric("Versato dopo", eur(totals["add"]),
-              help="Soldi aggiunti con i versamenti dopo la partenza.")
-    c3.metric("Valore attuale", eur(totals["now"]))
-    c4.metric("Guadagno / Perdita", eur(totals["pl"]), pct(totals["plpct"]),
-              help="Valore attuale meno (valore di partenza + versato dopo).")
-
-    st.divider()
-
-    # ------------------------------------------------------------------ tabella titoli
-    st.subheader("🧾 I tuoi titoli")
     unit = "Monete" if ns == "cry" else "Azioni"
-    body = ""
-    for r in rows:
+    # ------------------------------------------------------------- riquadro principale
+    st.markdown(hero_html("Le tue crypto valgono" if ns == "cry" else "Le tue azioni valgono",
+                          totals, f"{unit.lower()} al {itdate(base_date)}"), unsafe_allow_html=True)
+    price_bar(last_update, f"{ns}_refresh",
+              lambda: (prices.update_prices_in_data(ds, log=lambda *_: None), save_data(doc)))
+
+    # ------------------------------------------------------------------ posizioni
+    st.markdown(f"<div class='sec'>{'🪙 Le tue crypto' if ns == 'cry' else '🧾 I tuoi titoli'}</div>",
+                unsafe_allow_html=True)
+    body, cards = "", ""
+    for r in sorted(rows, key=lambda x: -x["valore"]):
         col = colors.get(r["Categoria"], "#888")
         dot = (f"<span style='display:inline-block;width:10px;height:10px;border-radius:50%;"
                f"background:{col};margin-right:8px;vertical-align:middle'></span>")
-        pill = f"<span class='pill' style='background:{col}22;color:{col}'>{r['Categoria']}</span>"
-        catcell = f"<td class='hm' style='text-align:left'>{pill}</td>" if ns != "cry" else ""
+        pill = f"<span class='pill' style='background:{col}1f;color:{col}'>{r['Categoria']}</span>"
+        catcell = f"<td style='text-align:left'>{pill}</td>" if ns != "cry" else ""
         body += (f"<tr><td>{dot}{r['Titolo']}</td>" + catcell
                  + f"<td>{qtyfmt(r['qty_tot'])}</td>"
-                 f"<td>{eur(r['iniziale'])}</td>"
+                 f"<td>{eur(r['iniziale']) if r['iniziale'] else '–'}</td>"
                  f"<td>{eur(r['aggiunte']) if r['aggiunte'] else '–'}</td>"
                  f"<td><b>{eur(r['valore'])}</b></td>"
                  f"<td>{vspan(r['var'])}</td></tr>")
-    body += (f"<tr class='tot'><td>TOTALE</td>" + ("<td class='hm'></td>" if ns != "cry" else "")
+        cards += pcard(r["Titolo"], col, r["valore"], r["var"],
+                       f"{qtyfmt(r['qty_tot'])} {unit.lower()} · messi {eur(r['investito'])}")
+    body += (f"<tr class='tot'><td>TOTALE</td>" + ("<td></td>" if ns != "cry" else "")
              + f"<td></td><td>{eur(totals['iniz'])}</td>"
              f"<td>{eur(totals['add'])}</td>"
              f"<td>{eur(totals['now'])}</td><td>{vspan(totals['plpct'])}</td></tr>")
-    sub = "<span style='font-weight:400;text-transform:none;font-size:11.5px;color:#64748b'>"
+    sub = "<span class='thsub'>"
     st.markdown(
-        "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th>"
-        + ("<th class='hm'>Categoria</th>" if ns != "cry" else "")
-        + f"<th>{unit}<br>{sub}possedute oggi</span></th>"
-        f"<th>Valore di partenza<br>{sub}{unit.lower()} al {itdate(base_date)}</span></th>"
-        f"<th>Versato dopo<br>{sub}in euro</span></th>"
-        f"<th>Valore attuale<br>{sub}al {itdate(last_update)}</span></th>"
-        f"<th>Variazione<br>{sub}su partenza + versato</span></th></tr></thead>"
-        f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
-    st.caption(f"{unit} di partenza = soldi messi il {itdate(base_date)} ÷ prezzo di quel giorno. "
-               f"Valore attuale = {unit.lower()} × prezzo di oggi. I versamenti successivi restano in euro "
-               f"e comprano {unit.lower()} al prezzo del giorno in cui li registri.")
+        "<div class='dtbl'><div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th>"
+        + ("<th>Categoria</th>" if ns != "cry" else "")
+        + f"<th>{unit}</th>"
+        f"<th>Valore di partenza<br>{sub}al {itdate(base_date)}</span></th>"
+        f"<th>Versato dopo</th>"
+        f"<th>Valore attuale</th>"
+        f"<th>Variazione</th></tr></thead>"
+        f"<tbody>{body}</tbody></table></div></div>"
+        f"<div class='mcards'>{cards}</div>", unsafe_allow_html=True)
+    with st.expander("ℹ️ Come si calcolano questi numeri"):
+        st.markdown(
+            f"- **{unit} di partenza** = soldi che avevi il {itdate(base_date)} ÷ prezzo di quel giorno.\n"
+            f"- **Valore attuale** = {unit.lower()} che hai × prezzo di oggi.\n"
+            f"- **Versato dopo** = soldi degli acquisti fatti dopo la partenza.\n"
+            f"- **Variazione** = valore attuale rispetto a quanto hai messo in tutto (partenza + versato).")
 
     render_manage(data, doc, holdings, ns)
     st.divider()
 
-    render_pac(data, doc, holdings, ns)
-
     # ------------------------------------------------------------------ storico
-    st.subheader("📈 Andamento del valore totale")
+    st.markdown("<div class='sec'>📈 Andamento del valore totale</div>", unsafe_allow_html=True)
     hist = data.get("history", [])
     if len(hist) >= 2:
         hpts = pd.DataFrame([{"data": pd.to_datetime(h["date"]), "valore": h["total"]} for h in hist])
@@ -1021,7 +1130,7 @@ def render_dashboard(ds, doc, ns):
     st.divider()
 
     # ------------------------------------------------------------------ singolo titolo
-    st.subheader("🔍 Andamento di un singolo titolo")
+    st.markdown("<div class='sec'>🔍 Andamento di un singolo titolo</div>", unsafe_allow_html=True)
     asset_id = st.selectbox("Scegli un titolo", options=[h["id"] for h in holdings],
                             format_func=lambda i: by_id(holdings, i)["nome"], key=f"{ns}_asset_sel")
     ah = by_id(holdings, asset_id)
@@ -1329,77 +1438,58 @@ def render_overview(doc):
     pl = now - init
     plpct = (pl / init * 100) if init else 0.0
 
-    _top = st.columns([5, 1.4])
-    with _top[0]:
-        st.subheader("💼 Totale investimenti")
-    with _top[1]:
-        st.write("")
-        if st.button("📈 Aggiorna prezzi", key="all_refresh", use_container_width=True, type="primary",
-                     help="Aggiorna i prezzi di azioni e crypto"):
-            with st.spinner("Scarico i prezzi di mercato..."):
-                try:
-                    prices.update_prices_in_data(doc, log=lambda *_: None)
-                    if isinstance(doc.get("crypto"), dict) and doc["crypto"].get("holdings"):
-                        prices.update_prices_in_data(doc["crypto"], log=lambda *_: None)
-                    save_data(doc)
-                    refresh()
-                    done("Prezzi aggiornati!")
-                except Exception as e:
-                    st.error(f"Aggiornamento non riuscito: {e}")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Valore di partenza", eur(tot_s["iniz"] + tot_c["iniz"]),
-              help="Azioni al 29/05 e crypto al 26/06, ai prezzi di quei giorni.")
-    c2.metric("Versato dopo", eur(tot_s["add"] + tot_c["add"]))
-    c3.metric("Valore attuale", eur(now))
-    c4.metric("Guadagno / Perdita", eur(pl), pct(plpct),
-              help="Valore attuale meno (valore di partenza + versato dopo).")
-    st.divider()
+    tot_all = {"iniz": tot_s["iniz"] + tot_c["iniz"], "add": tot_s["add"] + tot_c["add"],
+               "init": init, "now": now, "pl": pl, "plpct": plpct}
+    st.markdown(hero_html("Il tuo portafoglio vale", tot_all, "azioni 29/05 · crypto 26/06"),
+                unsafe_allow_html=True)
 
-    # --- split Azioni vs Crypto ---
-    st.subheader("⚖️ Azioni vs Crypto")
+    def _refresh_all():
+        prices.update_prices_in_data(doc, log=lambda *_: None)
+        if isinstance(doc.get("crypto"), dict) and doc["crypto"].get("holdings"):
+            prices.update_prices_in_data(doc["crypto"], log=lambda *_: None)
+        save_data(doc)
+    price_bar(doc.get("last_update", ""), "all_refresh", _refresh_all)
+
+    # --- azioni vs crypto: due schede affiancate + barra ---
+    st.markdown("<div class='sec'>⚖️ Azioni e crypto</div>", unsafe_allow_html=True)
     ws = (tot_s["now"] / now * 100) if now else 0
     wc = 100 - ws if now else 0
-    st.markdown(
-        "<div style='display:flex;height:22px;border-radius:999px;overflow:hidden;margin:6px 0'>"
+    split = (
+        "<div class='splitbar'>"
         f"<div style='width:{ws:.1f}%;background:#2446c8'></div>"
         f"<div style='width:{wc:.1f}%;background:#c76a00'></div></div>"
-        f"<div style='font-size:14.5px;color:#475569;margin-bottom:10px'>🟦 Azioni {num1(ws)}% &nbsp;·&nbsp; 🟧 Crypto {num1(wc)}%</div>",
-        unsafe_allow_html=True)
-    srows = ""
-    for label, tot in [("📈 Azioni", tot_s), ("🪙 Crypto", tot_c)]:
-        w = (tot["now"] / now * 100) if now else 0
-        srows += (f"<tr><td>{label}</td><td>{eur(tot['iniz'])}</td><td>{eur(tot['add']) if tot['add'] else '–'}</td>"
-                  f"<td><b>{eur(tot['now'])}</b></td><td>{num1(w)}%</td>"
-                  f"<td>{vspan(tot['plpct'])}</td></tr>")
-    srows += (f"<tr class='tot'><td>TOTALE</td><td>{eur(tot_s['iniz'] + tot_c['iniz'])}</td>"
-              f"<td>{eur(tot_s['add'] + tot_c['add'])}</td><td>{eur(now)}</td>"
-              f"<td>100%</td><td>{vspan(plpct)}</td></tr>")
-    st.markdown(
-        "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Classe</th><th>Valore di partenza</th><th>Versato dopo</th>"
-        "<th>Valore attuale</th><th>Peso</th><th>Variazione<br><span style='font-weight:400;text-transform:none;font-size:11.5px;color:#64748b'>su partenza + versato</span></th></tr></thead>"
-        f"<tbody>{srows}</tbody></table></div>", unsafe_allow_html=True)
-    st.divider()
+        "<div class='split'>")
+    for label, tot, w, col in [("📈 Azioni", tot_s, ws, "#2446c8"), ("🪙 Crypto", tot_c, wc, "#c76a00")]:
+        cls = "pos" if tot["plpct"] >= 0 else "neg"
+        split += (f"<div class='scard' style='border-top:4px solid {col}'>"
+                  f"<div class='s-lab'>{label} <span>{num1(w)}%</span></div>"
+                  f"<div class='s-val'>{eur(tot['now'])}</div>"
+                  f"<div class='s-sub'>messi {eur(tot['init'])} · <span class='chg {cls}'>{pct(tot['plpct'])}</span></div>"
+                  "</div>")
+    st.markdown(split + "</div>", unsafe_allow_html=True)
 
     # --- tutte le posizioni ---
-    st.subheader("🧾 Tutte le posizioni")
+    st.markdown("<div class='sec'>🧾 Tutte le posizioni</div>", unsafe_allow_html=True)
     allr = [(r, "Azioni", "#2446c8") for r in rows_s] + [(r, "Crypto", "#c76a00") for r in rows_c]
     allr.sort(key=lambda x: -x[0]["valore"])
-    body = ""
+    body, cards = "", ""
     for r, cls, col in allr:
         w = (r["valore"] / now * 100) if now else 0
-        pill = f"<span class='pill' style='background:{col}22;color:{col}'>{cls}</span>"
+        pill = f"<span class='pill' style='background:{col}1f;color:{col}'>{cls}</span>"
         body += (f"<tr><td>{r['Titolo']}</td><td style='text-align:left'>{pill}</td>"
-                 f"<td>{qtyfmt(r['qty_tot'])}</td><td>{eur(r['iniziale'])}</td>"
-                 f"<td>{eur(r['aggiunte']) if r['aggiunte'] else '–'}</td><td><b>{eur(r['valore'])}</b></td>"
+                 f"<td>{eur(r['investito'])}</td><td><b>{eur(r['valore'])}</b></td>"
                  f"<td>{num1(w)}%</td><td>{vspan(r['var'])}</td></tr>")
+        cards += pcard(r["Titolo"], col, r["valore"], r["var"],
+                       f"{cls} · {num1(w)}% del totale")
     st.markdown(
-        "<div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th><th>Classe</th>"
-        "<th>Quantità</th><th>Valore di partenza</th><th>Versato dopo</th><th>Valore attuale</th><th>Peso</th><th>Variazione<br><span style='font-weight:400;text-transform:none;font-size:11.5px;color:#64748b'>su partenza + versato</span></th></tr></thead>"
-        f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
+        "<div class='dtbl'><div class='tblwrap'><table class='ptbl'><thead><tr><th>Titolo</th><th>Classe</th>"
+        "<th>Messi in tutto</th><th>Valore attuale</th><th>Peso</th><th>Variazione</th></tr></thead>"
+        f"<tbody>{body}</tbody></table></div></div>"
+        f"<div class='mcards'>{cards}</div>", unsafe_allow_html=True)
     st.divider()
 
     # --- andamento totale combinato ---
-    st.subheader("📈 Andamento totale (azioni + crypto)")
+    st.markdown("<div class='sec'>📈 Andamento totale (azioni + crypto)</div>", unsafe_allow_html=True)
     h_s = stk.get("history", []) or []
     h_c = cry.get("history", []) or []
     # le crypto contano al loro valore iniziale gia' dall'inizio dello storico azioni:
@@ -1444,7 +1534,7 @@ def render_overview(doc):
                "l'effetto dell'averle inserite oggi.")
 
 
-tab_stk, tab_cry, tab_all = st.tabs(["📈 Azioni", "🪙 Crypto", "📊 Panoramica"])
+tab_all, tab_stk, tab_cry = st.tabs(["🏠 Riepilogo", "📈 Azioni", "🪙 Crypto"])
 with tab_stk:
     render_dashboard(doc, doc, "stk")
     render_stock_news()
